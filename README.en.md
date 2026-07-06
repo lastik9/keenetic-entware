@@ -64,30 +64,23 @@ After the drive is ready:
 3. Go to the **OPKG** page → select the **OPKG** drive → **Save**. The router unpacks the installer and downloads the Entware packages from `bin.entware.net` (router needs internet).
 4. Watch the **System log** (Diagnostics) for the successful Entware install.
 
-### Enable swap
+### Router setup (swap + XKeen prep)
 
-The script reserves a 1 GB swap partition but leaves activation to the router (the correct place to run `mkswap`). Over SSH (login `root`, port `222` after Entware installs):
-
-```
-mkswap /dev/sda1
-```
-
-Then create an init script so swap comes up on every boot:
+After Entware is installed, SSH into the router (login `root`, password `keenetic`, port `222`) and run the helper. A clean Entware has no HTTPS client yet, so first install `wget-ssl`, then fetch the script — **two commands**:
 
 ```
-cat > /opt/etc/init.d/S02swap << 'EOF'
-#!/bin/sh
-case "$1" in
-  start) swapoff /dev/sda1 2>/dev/null; swapon /dev/sda1 2>/dev/null ;;
-  stop)  swapoff /dev/sda1 2>/dev/null ;;
-  *)     echo "usage: $0 {start|stop}" ;;
-esac
-EOF
-chmod +x /opt/etc/init.d/S02swap
-/opt/etc/init.d/S02swap start
+opkg update && opkg install wget-ssl ca-bundle ca-certificates
+wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 ```
 
-Check with `free` — the `Swap:` line should show ~1 GB.
+The helper will:
+- activate **swap** (`mkswap` + `S02swap` autostart, finding the partition by its `SWAP` label — robust against drive-letter changes);
+- run `opkg update` and install base packages (`curl`, `tar`, `nano`, `ca-bundle`);
+- check router components (netfilter, IPv6) and tell you what's missing;
+- offer to change the `root` SSH password from the default `keenetic`;
+- print the [XKeen](https://github.com/jameszeroX/XKeen) install command.
+
+Then reboot the router (`reboot`). Swap comes up automatically; verify with `cat /proc/swaps`.
 
 ## How it works
 

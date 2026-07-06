@@ -64,30 +64,23 @@ IGNORE_BREW=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenet
 3. Открой страницу **OPKG** → выбери накопитель **OPKG** → **Сохранить**. Роутер распакует установщик и докачает пакеты Entware с `bin.entware.net` (роутеру нужен интернет).
 4. Смотри **Системный журнал** (Диагностика) — там появятся строки об успешной установке Entware.
 
-### Активация swap
+### Настройка роутера (swap + подготовка под XKeen)
 
-Скрипт резервирует swap-раздел на 1 ГБ, но саму активацию оставляет роутеру (там — правильное место для `mkswap`). По SSH (логин `root`, порт `222` после установки Entware):
-
-```
-mkswap /dev/sda1
-```
-
-Затем создай init-скрипт, чтобы swap поднимался при каждой загрузке:
+После установки Entware зайди на роутер по SSH (логин `root`, пароль `keenetic`, порт `222`) и запусти хелпер. На чистом Entware ещё нет HTTPS-клиента, поэтому сначала ставим `wget-ssl`, потом качаем скрипт — **две команды**:
 
 ```
-cat > /opt/etc/init.d/S02swap << 'EOF'
-#!/bin/sh
-case "$1" in
-  start) swapoff /dev/sda1 2>/dev/null; swapon /dev/sda1 2>/dev/null ;;
-  stop)  swapoff /dev/sda1 2>/dev/null ;;
-  *)     echo "usage: $0 {start|stop}" ;;
-esac
-EOF
-chmod +x /opt/etc/init.d/S02swap
-/opt/etc/init.d/S02swap start
+opkg update && opkg install wget-ssl ca-bundle ca-certificates
+wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 ```
 
-Проверь командой `free` — в строке `Swap:` должно быть ~1 ГБ.
+Хелпер сам:
+- активирует **swap** (`mkswap` + автозапуск `S02swap`, поиск раздела по метке `SWAP` — устойчиво к смене буквы диска);
+- обновит opkg и поставит базовые пакеты (`curl`, `tar`, `nano`, `ca-bundle`);
+- проверит компоненты роутера (netfilter, IPv6) и подскажет, чего не хватает;
+- предложит сменить SSH-пароль `root` с дефолтного `keenetic`;
+- напечатает команду установки [XKeen](https://github.com/jameszeroX/XKeen).
+
+После — перезагрузи роутер (`reboot`). Swap поднимется автоматически; проверить можно командой `cat /proc/swaps`.
 
 ## Как это работает
 
