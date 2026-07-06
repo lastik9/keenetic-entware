@@ -37,7 +37,7 @@ E2FS_OWNER_REPO="lastik9/keenetic-entware"             # владелец/реп
 E2FS_RELEASE_TAG="e2fsprogs-v1.47.4-macos"             # тег релиза с бинарниками
 E2FS_BUNDLE_NAME="e2fsprogs-macos-universal.tar.gz"
 E2FS_BUNDLE_URL="https://github.com/${E2FS_OWNER_REPO}/releases/download/${E2FS_RELEASE_TAG}/${E2FS_BUNDLE_NAME}"
-E2FS_BUNDLE_SHA256="270b54e625d86b1ab7d696100f78e5e7bb7d3fec7890663336ad851effca4dc8"   # sha256 тарбола для проверки целостности
+E2FS_BUNDLE_SHA256="ef45e9e1f11a225ecef635cec8099cf666d2bec101b72f272e22c85c3fb86e9f"   # sha256 тарбола для проверки целостности
 
 # --- URL bootstrap-installer'ов Entware (сверять с bin.entware.net) ---
 URL_MIPSEL="https://bin.entware.net/mipselsf-k3.4/installer/mipsel-installer.tar.gz"

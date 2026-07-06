@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # build-macos-e2fsprogs.sh
-# Собирает universal (arm64 + x86_64) mke2fs и debugfs из исходников e2fsprogs
+# Собирает universal (arm64 + x86_64) mke2fs, debugfs и e2image из исходников e2fsprogs
 # для проекта keenetic-entware-flash (путь «голого мака» без Homebrew).
 #
-# Итог: dist/e2fsprogs-macos-universal.tar.gz  (плоский: mke2fs, debugfs)
+# Итог: dist/e2fsprogs-macos-universal.tar.gz  (плоский: mke2fs, debugfs, e2image)
 #       + печатает sha256 для вставки в prepare.sh.
 #
 # Запускать на macOS с установленными Xcode Command Line Tools.
@@ -61,7 +61,7 @@ info "configure (universal, --disable-nls)..."
   || { tail -30 /tmp/e2fs-configure.log; die "configure упал (лог: /tmp/e2fs-configure.log)"; }
 ok "configure ок."
 
-# ---- 3. Собираем только нужное: библиотеки + mke2fs + debugfs ----
+# ---- 3. Собираем только нужное: библиотеки + mke2fs + debugfs + e2image ----
 info "make libs ..."
 make -j"$JOBS" libs >/tmp/e2fs-libs.log 2>&1 \
   || { tail -40 /tmp/e2fs-libs.log; die "make libs упал (лог: /tmp/e2fs-libs.log)"; }
@@ -71,12 +71,17 @@ make -j"$JOBS" -C misc mke2fs >/tmp/e2fs-mke2fs.log 2>&1 \
 info "make debugfs ..."
 make -j"$JOBS" -C debugfs debugfs >/tmp/e2fs-debugfs.log 2>&1 \
   || { tail -40 /tmp/e2fs-debugfs.log; die "make debugfs упал (лог: /tmp/e2fs-debugfs.log)"; }
+info "make e2image ..."
+make -j"$JOBS" -C misc e2image >/tmp/e2fs-e2image.log 2>&1 \
+  || { tail -40 /tmp/e2fs-e2image.log; die "make e2image упал (лог: /tmp/e2fs-e2image.log)"; }
 ok "Сборка завершена."
 
 MKE2FS_BIN="$BUILD/$SRC_NAME/misc/mke2fs"
 DEBUGFS_BIN="$BUILD/$SRC_NAME/debugfs/debugfs"
+E2IMAGE_BIN="$BUILD/$SRC_NAME/misc/e2image"
 [[ -f "$MKE2FS_BIN" ]] || die "Не найден собранный mke2fs."
 [[ -f "$DEBUGFS_BIN" ]] || die "Не найден собранный debugfs."
+[[ -f "$E2IMAGE_BIN" ]] || die "Не найден собранный e2image."
 
 # ---- 4. Проверки: universal + только libSystem ----
 check_bin() {
@@ -104,17 +109,18 @@ check_bin() {
 echo; info "Проверяю бинарники..."
 check_bin "$MKE2FS_BIN"
 check_bin "$DEBUGFS_BIN"
+check_bin "$E2IMAGE_BIN"
 
 # ---- 5. Пакуем ----
 echo; info "Пакую бандл..."
 rm -rf "$DIST"; mkdir -p "$DIST/stage"
-cp "$MKE2FS_BIN" "$DEBUGFS_BIN" "$DIST/stage/"
-chmod +x "$DIST/stage/mke2fs" "$DIST/stage/debugfs"
+cp "$MKE2FS_BIN" "$DEBUGFS_BIN" "$E2IMAGE_BIN" "$DIST/stage/"
+chmod +x "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image"
 # ad-hoc подпись (prepare.sh делает это и сам, но пусть будет)
-codesign --force -s - "$DIST/stage/mke2fs" "$DIST/stage/debugfs" 2>/dev/null || \
+codesign --force -s - "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image" 2>/dev/null || \
   warn "codesign не прошёл (не критично, prepare.sh подпишет при скачивании)."
-# плоский тарбол: mke2fs и debugfs в корне (как ждёт prepare.sh)
-tar -czf "$DIST/$BUNDLE" -C "$DIST/stage" mke2fs debugfs
+# плоский тарбол: mke2fs, debugfs, e2image в корне
+tar -czf "$DIST/$BUNDLE" -C "$DIST/stage" mke2fs debugfs e2image
 rm -rf "$DIST/stage"
 
 SHA="$(shasum -a 256 "$DIST/$BUNDLE" | awk '{print $1}')"
