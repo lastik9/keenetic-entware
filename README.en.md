@@ -82,11 +82,36 @@ The helper will:
 
 Then reboot the router (`reboot`). Swap comes up automatically; verify with `cat /proc/swaps`.
 
+## Backup and restore
+
+USB flash drives run 24/7 in the router and wear out over time. `backup.sh` takes a **smart image** of a working drive (only the used ext4 blocks — via `e2image`), so when a drive dies you can restore a working Entware/XKeen onto a new drive in a minute instead of setting it up from scratch.
+
+The image is compact: from a 32 GB drive holding ~40 MB of data, the file is ~40 MB (not 32 GB), and it takes seconds.
+
+**Take a backup** (pull the drive from the router, plug it into the Mac):
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) backup
+```
+
+Pick the drive — you get a `keenetic-backup-YYYYMMDD-HHMM.kbak` file in the current folder.
+
+**Restore onto a drive** (a new or different one; it will be erased):
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) restore keenetic-backup-XXXX.kbak
+```
+
+Restore recreates the partition layout, unpacks ext4 from the image and prepares the swap partition. The clone carries everything: Entware, packages, configs, init scripts, SSH keys. After plugging into the router, just activate swap (`router-setup.sh` or `mkswap -L SWAP`).
+
+The target drive must be **at least as large** as the source. Restoring onto a bigger drive also works (ext4 takes the space left after swap).
+
 ## How it works
 
 - Partitioning uses the built-in `diskutil`; partition type IDs (0x82 swap, 0x83 Linux) are set with the built-in `fdisk`.
 - ext4 is created with `mke2fs`, and the installer is written into the ext4 partition with `debugfs` — **without mounting** (macOS can't mount ext4, and doesn't need to).
-- The `mke2fs`/`debugfs` binaries are built from e2fsprogs as **universal** (arm64 + x86_64), statically linked internally, so they depend only on `/usr/lib/libSystem`. See [BUILD.md](BUILD.md) to rebuild them yourself.
+- Backup uses `e2image` (used blocks only); restore uses `e2image` to a file + `dd conv=sparse` to the partition.
+- The `mke2fs`/`debugfs`/`e2image` binaries are built from e2fsprogs as **universal** (arm64 + x86_64), statically linked internally, so they depend only on `/usr/lib/libSystem`. See [BUILD.md](BUILD.md) to rebuild them yourself.
 
 ## Building the binaries yourself
 
