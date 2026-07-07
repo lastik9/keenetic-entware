@@ -180,6 +180,11 @@ do_backup() {
   local desc; desc="$(diskutil info "$DISK" | awk -F: '/Device \/ Media Name|Disk Size/ {gsub(/^ +/,"",$2); print $2}' | paste -sd', ' -)"
   info "Источник: $DISK ($desc)"
 
+  # Размер ext4-раздела источника — понадобится при restore, чтобы писать
+  # файл-образ ровно под исходную ФС (быстрее), а не под целевой раздел.
+  local ext4_part_bytes
+  ext4_part_bytes="$(diskutil info "${DISK}s2" 2>/dev/null | awk -F'[()]' '/Disk Size|Partition Size/{print $2; exit}' | awk '{print $1}')"
+
   OUT="keenetic-backup-$(date +%Y%m%d-%H%M).kbak"
   STAGE="$WORKDIR/stage"; mkdir -p "$STAGE"
 
@@ -204,6 +209,7 @@ do_backup() {
   if [[ "$DRY_RUN" != "1" ]]; then
     {
       echo "source_disk_bytes=$(disk_size_bytes "$DISK")"
+      echo "ext4_part_bytes=${ext4_part_bytes}"
       echo "ext4_label=OPKG"
       echo "swap_label=SWAP"
       echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -245,6 +251,7 @@ do_restore() {
   [[ -f "$STAGE/mbr.bin" && -f "$STAGE/opkg.e2img" ]] || die "Образ повреждён (нет mbr.bin/opkg.e2img)."
 
   local src_bytes; src_bytes="$(awk -F= '/source_disk_bytes/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
+  local src_ext4_bytes; src_ext4_bytes="$(awk -F= '/^ext4_part_bytes=/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
 
   local DISK RAW EXT4_RAW SWAP_DEV
   DISK="$(pick_disk 'Выбери флешку для ЗАПИСИ образа (будет СТЁРТА):')"
@@ -283,22 +290,38 @@ do_restore() {
   #    остаётся мусор от старого форматирования -> повреждённая ФС. Пишем всё.
   info "Разворачиваю ext4 из образа..."
   if [[ "$DRY_RUN" == "1" ]]; then
-    warn "(dry-run) e2image -ra opkg.e2img -> файл, затем dd (целиком) на $EXT4_RAW"
+    warn "(dry-run) e2image -ra opkg.e2img -> файл(размер исходной ФС), затем dd на $EXT4_RAW"
   else
-    # размер целевого раздела в байтах (файл делаем РОВНО под него, иначе I/O error на хвосте)
+    # Размер ЦЕЛЕВОГО раздела — для проверки вместимости.
     local part_bytes
     part_bytes="$(diskutil info "${DISK}s2" 2>/dev/null | awk -F'[()]' '/Disk Size|Partition Size/{print $2; exit}' | awk '{print $1}')"
     [[ -n "$part_bytes" ]] || die "Не удалось определить размер раздела ${DISK}s2."
+
+    # Размер файла-образа = размер ИСХОДНОЙ ext4 (из meta), а НЕ целевого раздела.
+    # Пишем только реальный объём исходной ФС -> на большой флешке вдвое быстрее.
+    # Хвост за границей ФС не трогаем (ФС считает себя исходного размера и туда
+    # не заглядывает; растянем позже resize2fs на роутере).
+    # ВАЖНО: пишем НЕПРЕРЫВНО, без conv=sparse — sparse пропускал бы нули ВНУТРИ
+    # ФС и оставлял мусор -> битая ФС. Мы лишь укорачиваем запись по границе ФС.
+    local img_bytes="$src_ext4_bytes"
+    if [[ -z "$img_bytes" ]]; then
+      warn "В образе нет размера ФС (старый .kbak) — пишу под целевой раздел (медленнее, как раньше)."
+      img_bytes="$part_bytes"
+    fi
+    if [[ "$img_bytes" -gt "$part_bytes" ]]; then
+      die "ФС образа ($img_bytes Б) больше целевого раздела ($part_bytes Б). Нужна флешка крупнее."
+    fi
+
     local tmpimg="$WORKDIR/restore-fs.img"
-    truncate -s "$part_bytes" "$tmpimg" 2>/dev/null || mkfile -n "${part_bytes}" "$tmpimg" 2>/dev/null || \
-      dd if=/dev/zero of="$tmpimg" bs=1 count=0 seek="$part_bytes" 2>/dev/null
-    info "  e2image -ra в файл..."
+    truncate -s "$img_bytes" "$tmpimg" 2>/dev/null || mkfile -n "${img_bytes}" "$tmpimg" 2>/dev/null || \
+      dd if=/dev/zero of="$tmpimg" bs=1 count=0 seek="$img_bytes" 2>/dev/null
+    info "  e2image -ra в файл (ФС ~$(( img_bytes / 1024 / 1024 )) МБ)..."
     sudo "$E2IMAGE" -ra "$STAGE/opkg.e2img" "$tmpimg" || die "e2image -ra не смог развернуть образ в файл."
     sudo chown "$(id -u):$(id -g)" "$tmpimg" 2>/dev/null || true
-    info "  заливаю на раздел целиком (без sparse, надёжно; 10-20 минут на USB 2.0, не прерывай)..."
+    info "  заливаю на раздел (~$(( img_bytes / 1024 / 1024 )) МБ, без sparse; на USB 2.0 не прерывай)..."
     run "diskutil unmountDisk force $DISK"
     sudo dd if="$tmpimg" of="$EXT4_RAW" bs=4m 2>/dev/null || die "dd не смог записать образ на раздел."
-    ok "ext4 развёрнут на $EXT4_RAW."
+    ok "ext4 развёрнут на $EXT4_RAW (размер исходной ФС; на роутере растянется resize2fs)."
   fi
 
   # 3. Типы разделов (0x82 swap, 0x83 Linux) — как в prepare.sh
