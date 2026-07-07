@@ -1,8 +1,14 @@
 #!/bin/sh
 #
 # router-setup.sh — пост-установочная настройка роутера Keenetic/Netcraze под Entware + XKeen
-# Запуск НА РОУТЕРЕ (после установки Entware), по SSH (порт 222):
-#   curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+# Запуск НА РОУТЕРЕ (после установки Entware), по SSH (порт 222).
+#
+# ВАЖНО: на чистом Entware нет ни curl, ни HTTPS-wget, поэтому сначала ставим
+# wget-ssl, и только потом качаем этот скрипт. Две команды:
+#
+#   opkg update && opkg install wget-ssl ca-bundle ca-certificates
+#   wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+#
 #
 # Делает:
 #   1. Проверки окружения (Entware, /opt, swap-раздел)
@@ -187,11 +193,10 @@ ok "Система готова к установке XKeen."
 echo
 echo "${C_C}Запусти установщик XKeen вручную (интерактивный — спросит про ядро и конфиги):${C_0}"
 echo
-echo "  cd /tmp"
-echo "  sh -c \"\$(curl -sSL https://raw.githubusercontent.com/jameszeroX/XKeen/main/install.sh)\""
+echo "  cd /tmp && sh -c \"\$(curl -sSL https://raw.githubusercontent.com/jameszeroX/XKeen/main/install.sh)\""
 echo
 echo "${C_Y}Если GitHub недоступен — тот же установщик через CDN jsDelivr:${C_0}"
-echo "  sh -c \"\$(curl -sSL https://cdn.jsdelivr.net/gh/jameszeroX/XKeen@main/install.sh)\""
+echo "  cd /tmp && sh -c \"\$(curl -sSL https://cdn.jsdelivr.net/gh/jameszeroX/XKeen@main/install.sh)\""
 echo
 echo "  Документация и настройка Xray: https://github.com/jameszeroX/XKeen"
 echo

@@ -64,6 +64,10 @@ After the drive is ready:
 3. Go to the **OPKG** page → select the **OPKG** drive → **Save**. The router unpacks the installer and downloads the Entware packages from `bin.entware.net` (router needs internet).
 4. Watch the **System log** (Diagnostics) for the successful Entware install.
 
+> **Important: reboot the router when swapping drives.** If you pull one drive and insert another, always reboot the router before installing. Otherwise the router keeps traces of the previous drive (disk letters, stale OPKG config) and the install may fail with `exec format error` in the log. Simple rule: **one drive + reboot = clean start.**
+
+> **If you see `exec format error`** (Entware "installs" but won't start / SSH won't let you in): reboot the router with a single drive inserted — this almost always fixes it. If the error persists on a specific drive, verify the architecture: on a working install, `opkg print-architecture` shows the real arch (e.g. `mipsel-3.4`). Don't rely on `show version` from the web CLI — it reports the arch in a broad sense (`mips` for mipsel systems) and is misleading. Note also that **Netcraze (NC-XXXX)** is a separate Keenetic brand: identically named models (e.g. Viva) may have a different arch, so `opkg print-architecture` is the most reliable source.
+
 ### Router setup (swap + XKeen prep)
 
 After Entware is installed, SSH into the router (login `root`, password `keenetic`, port `222`) and run the helper. A clean Entware has no HTTPS client yet, so first install `wget-ssl`, then fetch the script — **two commands**:
