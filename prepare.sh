@@ -326,10 +326,10 @@ ${c_cyn}Дальнейшие шаги на роутере:${c_rst}
      (нужен интернет на роутере).
   4. Дождись в Журнале (Диагностика) строк об успешной установке Entware.
 
-${c_cyn}Активация swap (по SSH, порт 222, после установки Entware):${c_rst}
-     cat /proc/partitions          # найди swap-раздел (обычно sda1)
-     mkswap /dev/sda1
-     swapon  /dev/sda1
-     # + добавить в автозапуск /opt/etc/init.d/ (сделаем в SSH-хелпере)
+${c_cyn}Настройка роутера (swap + подготовка под XKeen):${c_rst}
+  Зайди по SSH (root / порт 222) и запусти хелпер — он сам активирует swap
+  (с автозапуском) и поставит базовые пакеты. Две команды:
+     opkg update && opkg install wget-ssl ca-bundle ca-certificates
+     wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 
 NEXT
