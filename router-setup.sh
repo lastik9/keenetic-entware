@@ -99,14 +99,21 @@ setup_swap() {
 
   if [ -n "$SWAP_DEV" ]; then
     ok "Раздел найден по метке SWAP: $SWAP_DEV"
-    if blkid "$SWAP_DEV" 2>/dev/null | grep -q 'TYPE="swap"'; then
-      ok "Swap-сигнатура на месте."
+    # Уже активен? Тогда сигнатура заведомо на месте — mkswap не трогаем.
+    if grep -q "^$SWAP_DEV " /proc/swaps 2>/dev/null; then
+      ok "Swap-сигнатура на месте (раздел уже активен)."
     else
-      info "Swap-сигнатуры нет — создаю (mkswap)..."
-      if mkswap -L SWAP "$SWAP_DEV" >/dev/null 2>&1; then
-        ok "Сигнатура создана."
+      # Не активен — пробуем включить как есть; если не вышло, создаём сигнатуру.
+      swapon "$SWAP_DEV" 2>/dev/null
+      if grep -q "^$SWAP_DEV " /proc/swaps 2>/dev/null; then
+        ok "Swap-сигнатура на месте."
       else
-        warn "Не удалось создать swap-сигнатуру на $SWAP_DEV."
+        info "Swap не включается — создаю сигнатуру (mkswap)..."
+        if mkswap -L SWAP "$SWAP_DEV" >/dev/null 2>&1; then
+          ok "Сигнатура создана."
+        else
+          warn "Не удалось создать swap-сигнатуру на $SWAP_DEV."
+        fi
       fi
     fi
   else
@@ -136,7 +143,7 @@ setup_swap() {
 
   # включаем (если ещё не включён)
   if grep -q "^$SWAP_DEV " /proc/swaps 2>/dev/null; then
-    ok "SWAP уже включён ($(swap_size_mb "$SWAP_DEV") МБ): $SWAP_DEV"
+    ok "SWAP включён ($(swap_size_mb "$SWAP_DEV") МБ): $SWAP_DEV"
   else
     swapon "$SWAP_DEV" 2>/dev/null
     if grep -q "^$SWAP_DEV " /proc/swaps 2>/dev/null; then
@@ -255,8 +262,10 @@ mode_xkeen_only() {
 mode_swap_only() {
   if setup_swap; then
     echo
-    ok "Swap готов. Текущее состояние:"
-    grep -q 'SWAP\|swap' /proc/swaps 2>/dev/null && cat /proc/swaps || warn "swap не активен."
+    ok "Swap готов. Текущее состояние (/proc/swaps):"
+    # заголовок + строки со swap-разделами (тип 'partition'/'file'), без слова 'swap'
+    head -n1 /proc/swaps 2>/dev/null
+    grep -v '^Filename' /proc/swaps 2>/dev/null || warn "swap не активен."
   fi
 }
 
