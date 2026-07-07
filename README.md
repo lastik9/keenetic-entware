@@ -76,18 +76,17 @@ opkg update && opkg install wget-ssl ca-bundle ca-certificates
 wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 ```
 
-Хелпер сам:
-- активирует **swap** (`mkswap` + автозапуск `S02swap`, поиск раздела по метке `SWAP` — устойчиво к смене буквы диска);
-- обновит opkg и поставит базовые пакеты (`curl`, `tar`, `nano`, `vim`, `ca-bundle`);
-- проверит компоненты роутера (netfilter, IPv6) и подскажет, чего не хватает;
-- предложит сменить SSH-пароль `root` с дефолтного `keenetic`;
-- напечатает команду установки [XKeen](https://github.com/jameszeroX/XKeen).
+Хелпер покажет **меню** из трёх сценариев:
 
-После — перезагрузи роутер (`reboot`). Swap поднимется автоматически; проверить можно командой `cat /proc/swaps`.
+1. **Полная настройка** — активирует **swap** (`mkswap` + автозапуск `S02swap`, поиск раздела по метке `SWAP`, устойчиво к смене буквы диска), обновит opkg и поставит базовые пакеты (`curl`, `tar`, `nano`, `vim`, `ca-bundle`), проверит компоненты роутера (netfilter, IPv6), предложит сменить SSH-пароль и **сразу запустит установщик [XKeen](https://github.com/jameszeroX/XKeen)** (GitHub, при недоступности — зеркало jsDelivr).
+2. **Только установка XKeen** — если Entware и swap уже настроены, нужен только прокси. Тот же fallback GitHub → jsDelivr.
+3. **Только swap** — быстрый путь после восстановления флешки из бэкапа: проверяет и включает swap (с человекочитаемой диагностикой и размером), настраивает автозапуск — ничего лишнего не переустанавливая.
+
+После настройки — перезагрузи роутер (`reboot`). Swap поднимется автоматически; проверить можно командой `cat /proc/swaps`.
 
 ### Geodata для XKeen/Mihomo (если базы не качаются)
 
-При старте XKeen/Mihomo скачивает базы `geoip`/`geosite`/`mmdb` с GitHub (release-assets). Из некоторых сетей (например, из РФ) GitHub может быть недоступен — в логах виден таймаут TLS, и прокси не поднимается без баз. Решение — прописать зеркала через CDN **jsDelivr** в конфиге Mihomo (обычно `/opt/etc/xkeen/.../config.yaml` — точный путь зависит от версии XKeen):
+При старте XKeen/Mihomo скачивает базы `geoip`/`geosite`/`mmdb` с GitHub (release-assets). Из некоторых сетей (например, из РФ) GitHub может быть недоступен — в логах виден таймаут TLS, и прокси не поднимается без баз. Решение — прописать зеркала через CDN **jsDelivr** в конфиге Mihomo (`/opt/etc/mihomo/config.yaml`):
 
 ```yaml
 geox-url:
