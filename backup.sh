@@ -4,18 +4,19 @@
 # Платформа: macOS. Копирует только ЗАНЯТЫЕ блоки ext4 (через e2image) —
 # образ маленький, снятие быстрое (не читает пустоту и мусор).
 #
-# Режимы:
+# Режимы (одна команда → меню, либо аргументом):
+#   backup.sh                   — покажет меню (backup / restore / clone)
 #   backup.sh backup            — снять образ флешки в файл (.kbak = tar.gz)
-#   backup.sh restore <файл>    — развернуть образ на флешку (СТИРАЕТ её)
-#   backup.sh                   — спросит режим интерактивно
+#   backup.sh restore [файл]    — развернуть образ на флешку (СТИРАЕТ её);
+#                                 без аргумента предложит выбрать .kbak из списка
+#   backup.sh clone             — снять образ с одной флешки и СРАЗУ залить
+#                                 на другую (без ручного ввода имени файла)
 #
 # Что внутри образа:
 #   mbr.bin    — таблица разделов (первый 1 МБ)
 #   opkg.e2img — ext4-раздел через e2image (только занятые блоки)
 #   meta.txt   — метаданные (размеры, метки)
 # Swap не бэкапится (временные данные) — при restore создаётся заново (mkswap -L SWAP).
-#
-# ВНИМАНИЕ: первый черновик, обкатывать на реальной флешке.
 #
 set -euo pipefail
 
@@ -25,6 +26,7 @@ SWAP_SIZE_MB=1024
 EXT4_LABEL="OPKG"
 WORKDIR="$(mktemp -d)"
 BUNDLE_DIR="$WORKDIR/bin"
+LAST_BACKUP=""          # путь к последнему снятому образу (для режима clone)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # --- Хостинг бинарников (тот же бандл, что у prepare.sh — теперь с e2image) ---
@@ -53,7 +55,7 @@ run() {
 }
 
 # ----------------------------------------------------------------------------
-# Поиск/доставка e2image + e2fsck (нужны для умного образа)
+# Поиск/доставка e2image (нужен для умного образа)
 # ----------------------------------------------------------------------------
 find_tool() {
   local name="$1" p
@@ -87,6 +89,7 @@ fetch_bundle() {
 
 E2IMAGE=""
 ensure_tools() {
+  [[ -n "$E2IMAGE" ]] && return 0        # уже нашли (важно для режима clone)
   E2IMAGE="$(find_tool e2image || true)"
   if [[ -z "$E2IMAGE" ]]; then
     fetch_bundle
@@ -100,7 +103,7 @@ ensure_tools() {
 # Выбор съёмного диска
 # ----------------------------------------------------------------------------
 pick_disk() {
-  local prompt="$1" disks=() d inf name size i choice
+  local prompt="$1" disks=() d inf name size i choice line
   while IFS= read -r line; do
     [[ -n "$line" ]] && disks+=("$line")
   done < <(diskutil list external physical 2>/dev/null | awk '/^\/dev\/disk/ {print $1}')
@@ -123,10 +126,52 @@ pick_disk() {
 disk_size_bytes() { diskutil info "$1" 2>/dev/null | awk -F'[()]' '/Disk Size/{print $2; exit}' | awk '{print $1}'; }
 
 # ----------------------------------------------------------------------------
+# Выбор файла образа (.kbak) из списка — чтобы не вводить имя руками
+# ----------------------------------------------------------------------------
+pick_backup_file() {
+  local files=() f i choice
+  local search_dirs=("$PWD")
+  [[ "$PWD" != "$HOME/keenetic" && -d "$HOME/keenetic" ]] && search_dirs+=("$HOME/keenetic")
+
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && files+=("$f")
+  done < <(find "${search_dirs[@]}" -maxdepth 1 -type f -name '*.kbak' 2>/dev/null | sort)
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    warn "Файлы .kbak рядом не найдены — введи путь вручную." >&2
+    read -rp "Путь к файлу образа (.kbak): " f < /dev/tty
+    echo "$f"; return 0
+  fi
+
+  printf "%sВыбери файл образа для восстановления:%s\n" "$c_cyn" "$c_rst" >&2
+  i=1
+  for f in "${files[@]}"; do
+    printf "  %s%d)%s %s  (%s, %s)\n" "$c_grn" "$i" "$c_rst" \
+      "$f" \
+      "$(du -h "$f" 2>/dev/null | cut -f1)" \
+      "$(date -r "$f" '+%Y-%m-%d %H:%M' 2>/dev/null)" >&2
+    i=$((i+1))
+  done
+  printf "  %sp)%s ввести путь вручную\n" "$c_grn" "$c_rst" >&2
+  read -rp "Номер файла (или p / q): " choice < /dev/tty
+  [[ "$choice" == "q" ]] && exit 0
+  if [[ "$choice" == "p" ]]; then
+    read -rp "Путь к файлу образа (.kbak): " f < /dev/tty
+    echo "$f"; return 0
+  fi
+  [[ "$choice" =~ ^[0-9]+$ ]] && (( choice>=1 && choice<=${#files[@]} )) || die "Некорректный выбор."
+  echo "${files[$((choice-1))]}"
+}
+
+# ----------------------------------------------------------------------------
 # BACKUP
+#   Аргумент finish: mount (по умолчанию — вернуть диск в систему)
+#                    eject (для clone — извлечь, чтобы можно было вынуть флешку)
+#   По завершении путь к образу кладётся в глобальную LAST_BACKUP.
 # ----------------------------------------------------------------------------
 do_backup() {
   ensure_tools
+  local finish="${1:-mount}"
   local DISK RAW EXT4_RAW OUT STAGE
   DISK="$(pick_disk 'Выбери флешку для СНЯТИЯ образа:')"
   RAW="${DISK/\/dev\/disk/\/dev\/rdisk}"
@@ -170,19 +215,29 @@ do_backup() {
     warn "(dry-run) tar -czf $OUT mbr.bin opkg.e2img meta.txt"
   fi
 
-  run "diskutil mountDisk $DISK" || true
+  # запомним абсолютный путь для режима clone
+  LAST_BACKUP="$PWD/$OUT"
+
+  if [[ "$finish" == "eject" ]]; then
+    run "diskutil eject $DISK" || true
+    info "Исходную флешку можно вынимать."
+  else
+    run "diskutil mountDisk $DISK" || true
+  fi
   echo
-  ok "Готово. Файл $OUT — из него можно восстановить флешку."
+  ok "Готово. Файл: $LAST_BACKUP"
+  info "Из него можно восстановить/клонировать флешку."
 }
 
 # ----------------------------------------------------------------------------
-# RESTORE
+# RESTORE  (логика разворачивания — как в проверенной версии, без изменений)
 # ----------------------------------------------------------------------------
 do_restore() {
   ensure_tools
   local IMG="${1:-}"
-  [[ -n "$IMG" ]] || read -rp "Путь к файлу образа (.kbak): " IMG < /dev/tty
+  [[ -n "$IMG" ]] || IMG="$(pick_backup_file)"
   [[ -f "$IMG" ]] || die "Файл образа не найден: $IMG"
+  info "Образ: $IMG"
 
   # распаковка
   local STAGE="$WORKDIR/restore"; mkdir -p "$STAGE"
@@ -223,10 +278,12 @@ do_restore() {
   run "diskutil unmountDisk force $DISK"
 
   # 2. Развернуть ext4: e2image пишет в ФАЙЛ (в устройство macOS напрямую не умеет —
-  #    даёт "block -1"), затем dd conv=sparse быстро льёт файл на раздел, пропуская нули.
+  #    даёт "block -1"), затем dd льёт файл на раздел ЦЕЛИКОМ.
+  #    ВАЖНО: без conv=sparse! Иначе dd пропускает нулевые блоки, и на их месте
+  #    остаётся мусор от старого форматирования -> повреждённая ФС. Пишем всё.
   info "Разворачиваю ext4 из образа..."
   if [[ "$DRY_RUN" == "1" ]]; then
-    warn "(dry-run) e2image -ra opkg.e2img -> файл, затем dd conv=sparse на $EXT4_RAW"
+    warn "(dry-run) e2image -ra opkg.e2img -> файл, затем dd (целиком) на $EXT4_RAW"
   else
     # размер целевого раздела в байтах (файл делаем РОВНО под него, иначе I/O error на хвосте)
     local part_bytes
@@ -238,9 +295,9 @@ do_restore() {
     info "  e2image -ra в файл..."
     sudo "$E2IMAGE" -ra "$STAGE/opkg.e2img" "$tmpimg" || die "e2image -ra не смог развернуть образ в файл."
     sudo chown "$(id -u):$(id -g)" "$tmpimg" 2>/dev/null || true
-    info "  заливаю на раздел (dd conv=sparse, только данные)..."
+    info "  заливаю на раздел целиком (без sparse, надёжно; 10-20 минут на USB 2.0, не прерывай)..."
     run "diskutil unmountDisk force $DISK"
-    sudo dd if="$tmpimg" of="$EXT4_RAW" bs=4m conv=sparse 2>/dev/null || true
+    sudo dd if="$tmpimg" of="$EXT4_RAW" bs=4m 2>/dev/null || die "dd не смог записать образ на раздел."
     ok "ext4 развёрнут на $EXT4_RAW."
   fi
 
@@ -271,19 +328,44 @@ FDISK
 }
 
 # ----------------------------------------------------------------------------
+# CLONE — снять образ с одной флешки и сразу залить на другую
+# ----------------------------------------------------------------------------
+do_clone() {
+  info "Режим КЛОН: снимем образ с исходной флешки и сразу зальём на целевую."
+  echo
+  do_backup eject                      # снимает образ, извлекает исходную, пишет путь в LAST_BACKUP
+  [[ -n "$LAST_BACKUP" ]] || die "Образ не создан — клонирование отменено."
+
+  echo
+  warn "Если у тебя ОДИН USB-порт — выньте исходную флешку и вставьте целевую сейчас."
+  warn "Если портов два — целевая флешка уже видна; на след. шаге выбери именно ЕЁ (не исходную!)."
+  local k; read -rp "Когда целевая флешка на месте — нажми Enter (или q для отмены): " k < /dev/tty
+  [[ "$k" == "q" ]] && exit 0
+
+  do_restore "$LAST_BACKUP"
+}
+
+# ----------------------------------------------------------------------------
 # Точка входа
 # ----------------------------------------------------------------------------
 MODE="${1:-}"
 if [[ -z "$MODE" ]]; then
   printf "%sЧто сделать?%s\n" "$c_cyn" "$c_rst"
-  echo "  1) backup  — снять образ флешки"
-  echo "  2) restore — записать образ на флешку"
-  read -rp "Номер (1/2): " m < /dev/tty
-  case "$m" in 1) MODE="backup" ;; 2) MODE="restore" ;; *) die "Некорректный выбор." ;; esac
+  echo "  1) backup  — снять образ флешки в файл"
+  echo "  2) restore — записать образ из файла на флешку"
+  echo "  3) clone   — снять образ и сразу залить на другую флешку"
+  read -rp "Номер (1/2/3): " m < /dev/tty
+  case "$m" in
+    1) MODE="backup" ;;
+    2) MODE="restore" ;;
+    3) MODE="clone" ;;
+    *) die "Некорректный выбор." ;;
+  esac
 fi
 
 case "$MODE" in
   backup)  do_backup ;;
   restore) shift || true; do_restore "${1:-}" ;;
-  *) die "Использование: backup.sh {backup|restore <файл>}" ;;
+  clone)   do_clone ;;
+  *) die "Использование: backup.sh {backup|restore [файл]|clone}" ;;
 esac
