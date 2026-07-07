@@ -58,7 +58,6 @@ IGNORE_BREW=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenet
 ## На роутере
 
 После того как флешка готова:
-
 1. Вставь флешку в Keenetic.
 2. Веб-интерфейс → **Общие настройки** → включи компоненты **«Поддержка открытых пакетов (OPKG)»** и **«Файловая система Ext»**.
 3. Открой страницу **OPKG** → выбери накопитель **OPKG** → **Сохранить**. Роутер распакует установщик и докачает пакеты Entware с `bin.entware.net` (роутеру нужен интернет).
@@ -79,12 +78,26 @@ wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router
 
 Хелпер сам:
 - активирует **swap** (`mkswap` + автозапуск `S02swap`, поиск раздела по метке `SWAP` — устойчиво к смене буквы диска);
-- обновит opkg и поставит базовые пакеты (`curl`, `tar`, `nano`, `ca-bundle`);
+- обновит opkg и поставит базовые пакеты (`curl`, `tar`, `nano`, `vim`, `ca-bundle`);
 - проверит компоненты роутера (netfilter, IPv6) и подскажет, чего не хватает;
 - предложит сменить SSH-пароль `root` с дефолтного `keenetic`;
 - напечатает команду установки [XKeen](https://github.com/jameszeroX/XKeen).
 
 После — перезагрузи роутер (`reboot`). Swap поднимется автоматически; проверить можно командой `cat /proc/swaps`.
+
+### Geodata для XKeen/Mihomo (если базы не качаются)
+
+При старте XKeen/Mihomo скачивает базы `geoip`/`geosite`/`mmdb` с GitHub (release-assets). Из некоторых сетей (например, из РФ) GitHub может быть недоступен — в логах виден таймаут TLS, и прокси не поднимается без баз. Решение — прописать зеркала через CDN **jsDelivr** в конфиге Mihomo (обычно `/opt/etc/xkeen/.../config.yaml` — точный путь зависит от версии XKeen):
+
+```yaml
+geox-url:
+  geoip: "https://fastly.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat"
+  geosite: "https://fastly.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb"
+  asn: "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-ASN.mmdb"
+```
+
+После правки перезапусти XKeen/Mihomo — базы подтянутся с зеркала.
 
 ## Бэкап и восстановление
 
@@ -92,31 +105,41 @@ wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router
 
 Образ компактный: с 32 ГБ флешки, где данных ~40 МБ, файл получится ~40 МБ (а не 32 ГБ), снятие — секунды.
 
-**Снять образ** (вынь флешку из роутера, вставь в мак):
+Проще всего запустить `backup.sh` **без аргументов** — появится меню:
+- **backup** — снять образ флешки в файл `.kbak`;
+- **restore** — записать образ на флешку (скрипт сам покажет список найденных `.kbak`, имя вводить не нужно);
+- **clone** — снять образ с одной флешки и сразу залить на другую (без промежуточного ввода имени файла).
 
 ```
+bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
+```
+
+Можно и по-старому, аргументом:
+
+```
+# снять образ:
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) backup
-```
 
-Выбери флешку — получишь файл `keenetic-backup-ГГГГММДД-ЧЧММ.kbak` в текущей папке.
-
-**Восстановить на флешку** (новую или другую; будет стёрта):
-
-```
+# восстановить на флешку (будет стёрта); без имени файла — покажет меню выбора:
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) restore keenetic-backup-XXXX.kbak
 ```
 
 Восстановление воссоздаёт разметку, разворачивает ext4 из образа и готовит swap-раздел. Клон переносит всё: Entware, пакеты, конфиги, init-скрипты, SSH-ключи. После вставки в роутер останется активировать swap (`router-setup.sh` или `mkswap -L SWAP`).
 
-Целевая флешка должна быть **не меньше** исходной. На флешку большего объёма восстановление тоже работает (ext4 займёт размер, оставшийся после swap).
+Целевая флешка должна быть **не меньше** исходной. На флешку большего объёма восстановление тоже работает: файловая система при этом займёт объём **исходной** флешки, а не всей целевой — так восстановление быстрее (пишется только реальный размер ФС), и роутеру это никак не мешает. Если хочешь задействовать весь объём целевой флешки, растяни ФС **на роутере** (online, прямо на смонтированном `/opt`) одной командой:
+
+```
+opkg install resize2fs && resize2fs "$(blkid | grep 'LABEL="OPKG"' | cut -d: -f1)"
+```
+
+(раздел `OPKG` находится по метке — так же, как swap по метке `SWAP`.)
 
 ## Как это работает
 
 - Разметка — встроенным `diskutil`; типы разделов (0x82 swap, 0x83 Linux) выставляются встроенным `fdisk`.
 - ext4 создаётся через `mke2fs`, а установщик пишется в ext4-раздел через `debugfs` — **без монтирования** (macOS не умеет монтировать ext4, и это не требуется).
-- Бэкап использует `e2image` (только занятые блоки), восстановление — `e2image` в файл + `dd conv=sparse` на раздел.
+- Бэкап использует `e2image` (только занятые блоки). Восстановление разворачивает `e2image` в файл размером с исходную ФС и заливает его на раздел через `dd` **целиком, без** `conv=sparse` — пропуск нулевых блоков оставлял бы на их месте мусор от старой разметки и повреждал ФС.
 - Бинарники `mke2fs`/`debugfs`/`e2image` собраны из e2fsprogs как **universal** (arm64 + x86_64), внутренние либы влинкованы статически, поэтому зависят только от `/usr/lib/libSystem`. Как пересобрать самому — см. [BUILD.md](BUILD.md).
-
 
 ## Собрать бинарники самому
 

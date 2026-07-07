@@ -131,7 +131,7 @@ info "opkg upgrade (может занять время)..."
 opkg upgrade 2>/dev/null || warn "opkg upgrade завершился с предупреждениями."
 
 # ca-bundle/ca-certificates — для HTTPS; curl и tar — требования установщика XKeen; nano — правка конфигов
-for pkg in ca-bundle ca-certificates curl tar nano; do
+for pkg in ca-bundle ca-certificates curl tar nano vim; do
   if opkg list-installed 2>/dev/null | grep -q "^$pkg "; then
     ok "$pkg уже установлен."
   else
