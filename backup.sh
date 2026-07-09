@@ -30,7 +30,16 @@ EXT4_LABEL="OPKG"
 WORKDIR="$(mktemp -d)"
 BUNDLE_DIR="$WORKDIR/bin"
 LAST_BACKUP=""          # путь к последнему снятому образу (для режима clone)
-trap 'rm -rf "$WORKDIR"' EXIT
+NO_SHRINK="${NO_SHRINK:-0}"   # NO_SHRINK=1 — отключить ужатие ФС (аварийный тумблер)
+# --- Состояние ужатия ФС (см. shrink_fs/grow_fs) ---
+SHRUNK_DEV=""           # блок-устройство с ВРЕМЕННО ужатой ФС; пусто = ужатия нет
+SHRUNK_FS_BYTES=""      # размер ужатой ФС в байтах (пойдёт в meta.txt)
+FS_IS_CLEAN=0           # 1 — e2fsck подтвердил чистоту (без этого ужимать нельзя)
+FS_NOT_GROWN=0          # 1 — при restore ФС не удалось растянуть на весь раздел
+# Ловушка: если скрипт падает/прерывается между shrink и grow — вернуть ФС на место.
+# INT/TERM тоже, иначе Ctrl-C посреди e2image оставит флешку с ужатой ФС.
+cleanup() { grow_fs || true; rm -rf "$WORKDIR"; }
+trap cleanup EXIT INT TERM
 # --- Хостинг бинарников (тот же бандл, что у prepare.sh — теперь с e2image) ---
 E2FS_OWNER_REPO="lastik9/keenetic-entware"
 E2FS_RELEASE_TAG="e2fsprogs-v1.47.4-macos"
@@ -83,8 +92,9 @@ fetch_bundle() {
     chmod +x "$BUNDLE_DIR/$t"
     codesign --force -s - "$BUNDLE_DIR/$t" 2>/dev/null || true
   done
-  # e2fsck — желателен (предчек ФС), но не критичен
-  for t in e2fsck; do
+  # e2fsck (предчек ФС) и resize2fs (ужатие) — желательны, но не критичны:
+  # без них скрипт работает по-старому, просто без проверки/ужатия.
+  for t in e2fsck resize2fs; do
     if [[ -f "$BUNDLE_DIR/$t" ]]; then
       chmod +x "$BUNDLE_DIR/$t"
       codesign --force -s - "$BUNDLE_DIR/$t" 2>/dev/null || true
@@ -93,6 +103,7 @@ fetch_bundle() {
 }
 E2IMAGE=""
 E2FSCK=""
+RESIZE2FS=""
 ensure_tools() {
   [[ -n "$E2IMAGE" ]] && return 0        # уже нашли (важно для режима clone)
   E2IMAGE="$(find_tool e2image || true)"
@@ -107,6 +118,12 @@ ensure_tools() {
     ok "e2fsck: $E2FSCK"
   else
     warn "e2fsck не найден — проверка ФС перед бэкапом будет пропущена."
+  fi
+  RESIZE2FS="$(find_tool resize2fs || true)"
+  if [[ -n "$RESIZE2FS" ]]; then
+    ok "resize2fs: $RESIZE2FS"
+  else
+    warn "resize2fs не найден — ужатие ФС отключено (образ и restore будут как раньше)."
   fi
 }
 # ----------------------------------------------------------------------------
@@ -131,6 +148,7 @@ fsck_precheck() {
   sudo "$E2FSCK" -fn "$part" > "$WORKDIR/fsck.log" 2>&1 || rc=$?
   if [[ "$rc" -eq 0 ]]; then
     ok "ФС чистая — снимаю образ."
+    FS_IS_CLEAN=1
     return 0
   fi
   echo
@@ -149,13 +167,104 @@ fsck_precheck() {
       run "diskutil unmountDisk force $DISK"
       if sudo "$E2FSCK" -fn "$part" >/dev/null 2>&1; then
         ok "ФС чистая."
+        FS_IS_CLEAN=1
       else
         warn "ФС всё ещё с ошибками — продолжаю на твой риск."
       fi
       ;;
-    c|C) warn "Продолжаю без починки (на твой риск)." ;;
+    c|C) warn "Продолжаю без починки (на твой риск). Ужатие ФС будет пропущено." ;;
     *)   die "Отмена." ;;
   esac
+  return 0
+}
+# ----------------------------------------------------------------------------
+# Ужатие ФС ПЕРЕД снятием образа.
+#
+# Зачем: e2image и так копирует только занятые блоки, но при restore dd льёт
+# образ до ГРАНИЦЫ ФС. Если ФС занимает весь раздел (55 ГБ), dd пишет 55 ГБ,
+# из них 54 ГБ нулей. Ужав ФС до реального объёма (~1.5 ГБ), укорачиваем dd
+# в десятки раз. После restore ФС растягивается обратно (grow в do_restore).
+#
+# resize2fs, в отличие от e2image, прекрасно работает с БЛОК-устройством macOS
+# (/dev/diskNsX). Через rdisk — не пробовать.
+#
+# Размер блока НЕ угадываем: берём из вывода самого resize2fs — он печатает
+#   "The filesystem on /dev/diskNs2 is now 90000 (4k) blocks long."
+# Отсюда же и число блоков → точный размер ФС в байтах для meta.txt.
+#
+# Возврат: 0 — ужали (SHRUNK_DEV/SHRUNK_FS_BYTES заполнены), 1 — пропустили.
+# ----------------------------------------------------------------------------
+shrink_fs() {
+  local DISK="$1"
+  local part="${DISK}s2"          # БЛОК-устройство, не rdisk
+  local min_blocks target out blocks ksz
+  [[ "$NO_SHRINK" == "1" ]] && { info "Ужатие ФС отключено (NO_SHRINK=1)."; return 1; }
+  [[ "$DRY_RUN" == "1" ]]  && { warn "(dry-run) resize2fs -P + ужатие ФС"; return 1; }
+  if [[ -z "$RESIZE2FS" ]]; then
+    warn "Нет resize2fs — ужатие пропускаю (restore будет медленнее, но корректно)."
+    return 1
+  fi
+  # resize2fs откажется работать на грязной ФС, и он прав. Не рискуем.
+  if [[ "$FS_IS_CLEAN" != "1" ]]; then
+    warn "ФС не подтверждена как чистая — ужатие пропускаю."
+    return 1
+  fi
+  run "diskutil unmountDisk force $DISK"
+  min_blocks="$(sudo "$RESIZE2FS" -P "$part" 2>/dev/null \
+                 | sed -n 's/.*minimum size of the filesystem: *\([0-9][0-9]*\).*/\1/p' | head -1)"
+  if [[ ! "$min_blocks" =~ ^[0-9]+$ ]] || [[ "$min_blocks" -le 0 ]]; then
+    warn "Не удалось узнать минимальный размер ФС — ужатие пропускаю."
+    return 1
+  fi
+  # Запас: resize2fs -P систематически ЗАНИЖАЕТ. Берём +30% и не меньше +8192
+  # блоков — ужиматься впритык означает напрашиваться на отказ или битую ФС.
+  target=$(( min_blocks * 13 / 10 ))
+  [[ "$target" -lt $(( min_blocks + 8192 )) ]] && target=$(( min_blocks + 8192 ))
+  info "Ужимаю ФС перед снятием образа (минимум $min_blocks бл., беру $target бл.)..."
+  # SHRUNK_DEV ставим ДО вызова: если resize2fs упадёт на полпути, ловушка
+  # (cleanup -> grow_fs) вернёт ФС на место.
+  SHRUNK_DEV="$part"
+  if ! out="$(sudo "$RESIZE2FS" "$part" "$target" 2>&1)"; then
+    warn "resize2fs не смог ужать ФС:"
+    printf '%s\n' "$out" | tail -5 >&2
+    grow_fs || true                # вернуть как было и работать по-старому
+    return 1
+  fi
+  # Парсим "... is now NNNNN (4k) blocks long" ИЛИ "... already NNNNN (4k) blocks long"
+  blocks="$(printf '%s\n' "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) (\([0-9][0-9]*\)k) blocks long.*/\1/p' | head -1)"
+  ksz="$(   printf '%s\n' "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) (\([0-9][0-9]*\)k) blocks long.*/\2/p' | head -1)"
+  if [[ ! "$blocks" =~ ^[0-9]+$ ]] || [[ ! "$ksz" =~ ^[0-9]+$ ]]; then
+    warn "Не разобрал вывод resize2fs — на всякий случай возвращаю ФС и продолжаю без ужатия."
+    printf '%s\n' "$out" | tail -5 >&2
+    grow_fs || true
+    return 1
+  fi
+  SHRUNK_FS_BYTES=$(( blocks * ksz * 1024 ))
+  ok "ФС ужата до $blocks блоков по ${ksz}k = $(( SHRUNK_FS_BYTES / 1024 / 1024 )) МБ."
+  return 0
+}
+# ----------------------------------------------------------------------------
+# Вернуть ужатую ФС на весь раздел. Идемпотентна: пустой SHRUNK_DEV = ничего не делать.
+# Вызывается и штатно (после e2image), и из ловушки при аварии/Ctrl-C.
+# ----------------------------------------------------------------------------
+grow_fs() {
+  local part="$SHRUNK_DEV" disk
+  [[ -n "$part" ]] || return 0
+  SHRUNK_DEV=""                    # сбрасываем СРАЗУ — иначе ловушка зациклится
+  disk="${part%s2}"
+  echo
+  info "Возвращаю ФС на весь раздел ($part)..."
+  diskutil unmountDisk force "$disk" >/dev/null 2>&1 || true
+  # После ужатия ФС чистая; e2fsck здесь — страховка на случай аварийного вызова.
+  [[ -n "$E2FSCK" ]] && { sudo "$E2FSCK" -fy "$part" >/dev/null 2>&1 || true; }
+  if sudo "$RESIZE2FS" "$part" >/dev/null 2>&1; then
+    ok "ФС восстановлена на полный размер раздела."
+  else
+    warn "Не удалось растянуть ФС обратно! Флешка РАБОТОСПОСОБНА, данные целы,"
+    warn "но ФС меньше раздела. Растянуть вручную:"
+    warn "  diskutil unmountDisk force $disk"
+    warn "  sudo ${RESIZE2FS:-resize2fs} $part"
+  fi
   return 0
 }
 # ----------------------------------------------------------------------------
@@ -248,12 +357,19 @@ do_backup() {
   fsck_precheck "$DISK"
   info "Размонтирую диск..."
   run "diskutil unmountDisk force $DISK"
+  # 0.5. Ужать ФС до реального объёма — тогда при restore dd напишет мегабайты,
+  #      а не десятки гигабайт. Не получилось — не беда, работаем по-старому.
+  shrink_fs "$DISK" || true
+  run "diskutil unmountDisk force $DISK"
   # 1. Таблица разделов (первый 1 МБ)
   info "Сохраняю таблицу разделов..."
   run "sudo dd if=$RAW of=$STAGE/mbr.bin bs=1m count=1 2>/dev/null"
   # 2. ext4 через e2image -ra (raw-образ ВКЛЮЧАЯ данные файлов, пустое пропускается)
   info "Снимаю умный образ ext4 (занятые блоки + данные)..."
   run "sudo $E2IMAGE -ra $EXT4_RAW $STAGE/opkg.e2img"
+  # 2.5. ФС источника — обратно на весь раздел. Делаем СРАЗУ после e2image,
+  #      чтобы окно «флешка с ужатой ФС» было минимальным.
+  grow_fs
   # sudo создал файлы владельцем root — возвращаем их текущему пользователю,
   # иначе tar (под обычным пользователем) не сможет их прочитать.
   if [[ "$DRY_RUN" != "1" ]]; then
@@ -264,6 +380,9 @@ do_backup() {
     {
       echo "source_disk_bytes=$(disk_size_bytes "$DISK")"
       echo "ext4_part_bytes=${ext4_part_bytes}"
+      # ext4_fs_bytes — размер УЖАТОЙ ФС внутри образа. Пишется только если
+      # ужатие удалось. restore предпочитает его: под него делает файл и dd.
+      [[ -n "$SHRUNK_FS_BYTES" ]] && echo "ext4_fs_bytes=${SHRUNK_FS_BYTES}"
       echo "ext4_label=OPKG"
       echo "swap_label=SWAP"
       echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -300,7 +419,21 @@ do_restore() {
   tar -xzf "$IMG" -C "$STAGE" || die "Не удалось распаковать образ."
   [[ -f "$STAGE/mbr.bin" && -f "$STAGE/opkg.e2img" ]] || die "Образ повреждён (нет mbr.bin/opkg.e2img)."
   local src_bytes; src_bytes="$(awk -F= '/source_disk_bytes/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
-  local src_ext4_bytes; src_ext4_bytes="$(awk -F= '/^ext4_part_bytes=/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
+  # Размер образа для dd. Приоритет:
+  #   1) ext4_fs_bytes  — ФС была ужата при бэкапе (новые .kbak): пишем мегабайты
+  #   2) ext4_part_bytes — ФС во весь раздел источника (Часть А)
+  #   3) размер целевого раздела (совсем старые .kbak) — медленно, но верно
+  local src_ext4_bytes; src_ext4_bytes="$(awk -F= '/^ext4_fs_bytes=/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
+  local fs_was_shrunk=0
+  if [[ -n "$src_ext4_bytes" ]]; then
+    fs_was_shrunk=1
+  else
+    src_ext4_bytes="$(awk -F= '/^ext4_part_bytes=/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
+  fi
+  FS_NOT_GROWN=0
+  if [[ "$fs_was_shrunk" == "1" ]]; then
+    info "Образ с ужатой ФС ($(( src_ext4_bytes / 1024 / 1024 )) МБ) — запись будет быстрой."
+  fi
   local DISK RAW EXT4_RAW SWAP_DEV
   DISK="$(pick_disk 'Выбери флешку для ЗАПИСИ образа (будет СТЁРТА):')"
   RAW="${DISK/\/dev\/disk/\/dev\/rdisk}"
@@ -361,7 +494,25 @@ do_restore() {
     info "  заливаю на раздел (~$(( img_bytes / 1024 / 1024 )) МБ, без sparse; на USB 2.0 не прерывай)..."
     run "diskutil unmountDisk force $DISK"
     sudo dd if="$tmpimg" of="$EXT4_RAW" bs=4m 2>/dev/null || die "dd не смог записать образ на раздел."
-    ok "ext4 развёрнут на $EXT4_RAW (размер исходной ФС; на роутере растянется resize2fs)."
+    ok "ext4 развёрнут на $EXT4_RAW."
+    # 2.5. Растянуть ФС на весь целевой раздел — прямо здесь, на маке.
+    #      resize2fs работает с БЛОК-устройством (${DISK}s2), не с rdisk.
+    #      Раньше это делалось руками на роутере (opkg install resize2fs).
+    if [[ -n "$RESIZE2FS" && -n "$E2FSCK" ]]; then
+      info "Растягиваю ФС на весь раздел..."
+      diskutil unmountDisk force "$DISK" >/dev/null 2>&1 || true
+      sudo "$E2FSCK" -fy "${DISK}s2" >/dev/null 2>&1 || true   # resize2fs требует чистую ФС
+      if sudo "$RESIZE2FS" "${DISK}s2" >/dev/null 2>&1; then
+        ok "ФС занимает весь раздел ${DISK}s2."
+      else
+        warn "Не удалось растянуть ФС. Флешка рабочая, но ФС меньше раздела."
+        warn "Растянуть можно позже — на роутере или на маке (см. подсказку в конце)."
+        FS_NOT_GROWN=1
+      fi
+    else
+      warn "Нет resize2fs/e2fsck — ФС осталась размера исходной."
+      FS_NOT_GROWN=1
+    fi
   fi
   # 3. Типы разделов (0x82 swap, 0x83 Linux) — как в prepare.sh
   info "Выставляю типы разделов..."
@@ -385,9 +536,14 @@ FDISK
   echo
   ok "Готово. Флешку можно вставить в роутер."
   info "Swap активируется на роутере (router-setup.sh сделает mkswap -L SWAP)."
-  info "ФС осталась размера исходной. Растянуть на весь раздел — на роутере:"
-  info "  opkg install e2fsprogs resize2fs"
-  info "  DEV=\$(blkid | grep 'LABEL=\"OPKG\"' | cut -d: -f1); e2fsck -f \$DEV && resize2fs \$DEV"
+  if [[ "$FS_NOT_GROWN" == "1" ]]; then
+    echo
+    warn "ФС НЕ растянута на весь раздел. Растянуть на роутере:"
+    warn "  opkg install e2fsprogs resize2fs"
+    warn "  DEV=\$(blkid | grep 'LABEL=\"OPKG\"' | cut -d: -f1); e2fsck -f \$DEV && resize2fs \$DEV"
+  else
+    info "ФС уже растянута на весь раздел — ничего доделывать не нужно."
+  fi
 }
 # ----------------------------------------------------------------------------
 # CLONE — снять образ с одной флешки и сразу залить на другую
