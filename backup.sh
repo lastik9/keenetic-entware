@@ -45,7 +45,7 @@ E2FS_OWNER_REPO="lastik9/keenetic-entware"
 E2FS_RELEASE_TAG="e2fsprogs-v1.47.4-macos"
 E2FS_BUNDLE_NAME="e2fsprogs-macos-universal.tar.gz"
 E2FS_BUNDLE_URL="https://github.com/${E2FS_OWNER_REPO}/releases/download/${E2FS_RELEASE_TAG}/${E2FS_BUNDLE_NAME}"
-E2FS_BUNDLE_SHA256="ef45e9e1f11a225ecef635cec8099cf666d2bec101b72f272e22c85c3fb86e9f"
+E2FS_BUNDLE_SHA256="f5364b62a415ba34f9da8708048da468786fe137aa8d39d035b94de24beee833"
 c_red=$'\033[31m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_cyn=$'\033[36m'; c_rst=$'\033[0m'
 info()  { printf "%s[i]%s %s\n" "$c_cyn" "$c_rst" "$*"; }
 ok()    { printf "%s[v]%s %s\n" "$c_grn" "$c_rst" "$*"; }

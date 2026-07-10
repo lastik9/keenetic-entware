@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
 # build-macos-e2fsprogs.sh
-# Собирает universal (arm64 + x86_64) mke2fs, debugfs и e2image из исходников e2fsprogs
-# для проекта keenetic-entware-flash (путь «голого мака» без Homebrew).
+# Собирает universal (arm64 + x86_64) mke2fs, debugfs, e2image, e2fsck и resize2fs
+# из исходников e2fsprogs для проекта keenetic-entware-flash (путь «голого мака»
+# без Homebrew).
 #
-# Итог: dist/e2fsprogs-macos-universal.tar.gz  (плоский: mke2fs, debugfs, e2image)
-#       + печатает sha256 для вставки в prepare.sh.
+# Итог: dist/e2fsprogs-macos-universal.tar.gz
+#       (плоский: mke2fs, debugfs, e2image, e2fsck, resize2fs)
+#       + печатает sha256 для вставки в backup.sh И prepare.sh.
 #
 # Запускать на macOS с установленными Xcode Command Line Tools.
 #   bash build-macos-e2fsprogs.sh
@@ -61,7 +63,7 @@ info "configure (universal, --disable-nls)..."
   || { tail -30 /tmp/e2fs-configure.log; die "configure упал (лог: /tmp/e2fs-configure.log)"; }
 ok "configure ок."
 
-# ---- 3. Собираем только нужное: библиотеки + mke2fs + debugfs + e2image ----
+# ---- 3. Собираем только нужное: библиотеки + mke2fs + debugfs + e2image + e2fsck + resize2fs ----
 info "make libs ..."
 make -j"$JOBS" libs >/tmp/e2fs-libs.log 2>&1 \
   || { tail -40 /tmp/e2fs-libs.log; die "make libs упал (лог: /tmp/e2fs-libs.log)"; }
@@ -74,14 +76,24 @@ make -j"$JOBS" -C debugfs debugfs >/tmp/e2fs-debugfs.log 2>&1 \
 info "make e2image ..."
 make -j"$JOBS" -C misc e2image >/tmp/e2fs-e2image.log 2>&1 \
   || { tail -40 /tmp/e2fs-e2image.log; die "make e2image упал (лог: /tmp/e2fs-e2image.log)"; }
+info "make e2fsck ..."
+make -j"$JOBS" -C e2fsck e2fsck >/tmp/e2fs-e2fsck.log 2>&1 \
+  || { tail -40 /tmp/e2fs-e2fsck.log; die "make e2fsck упал (лог: /tmp/e2fs-e2fsck.log)"; }
+info "make resize2fs ..."
+make -j"$JOBS" -C resize resize2fs >/tmp/e2fs-resize2fs.log 2>&1 \
+  || { tail -40 /tmp/e2fs-resize2fs.log; die "make resize2fs упал (лог: /tmp/e2fs-resize2fs.log)"; }
 ok "Сборка завершена."
 
 MKE2FS_BIN="$BUILD/$SRC_NAME/misc/mke2fs"
 DEBUGFS_BIN="$BUILD/$SRC_NAME/debugfs/debugfs"
 E2IMAGE_BIN="$BUILD/$SRC_NAME/misc/e2image"
+E2FSCK_BIN="$BUILD/$SRC_NAME/e2fsck/e2fsck"
+RESIZE2FS_BIN="$BUILD/$SRC_NAME/resize/resize2fs"
 [[ -f "$MKE2FS_BIN" ]] || die "Не найден собранный mke2fs."
 [[ -f "$DEBUGFS_BIN" ]] || die "Не найден собранный debugfs."
 [[ -f "$E2IMAGE_BIN" ]] || die "Не найден собранный e2image."
+[[ -f "$E2FSCK_BIN" ]] || die "Не найден собранный e2fsck."
+[[ -f "$RESIZE2FS_BIN" ]] || die "Не найден собранный resize2fs."
 
 # ---- 4. Проверки: universal + только libSystem ----
 check_bin() {
@@ -110,24 +122,28 @@ echo; info "Проверяю бинарники..."
 check_bin "$MKE2FS_BIN"
 check_bin "$DEBUGFS_BIN"
 check_bin "$E2IMAGE_BIN"
+check_bin "$E2FSCK_BIN"
+check_bin "$RESIZE2FS_BIN"
 
 # ---- 5. Пакуем ----
 echo; info "Пакую бандл..."
 rm -rf "$DIST"; mkdir -p "$DIST/stage"
-cp "$MKE2FS_BIN" "$DEBUGFS_BIN" "$E2IMAGE_BIN" "$DIST/stage/"
-chmod +x "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image"
+cp "$MKE2FS_BIN" "$DEBUGFS_BIN" "$E2IMAGE_BIN" "$E2FSCK_BIN" "$RESIZE2FS_BIN" "$DIST/stage/"
+chmod +x "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image" \
+         "$DIST/stage/e2fsck" "$DIST/stage/resize2fs"
 # ad-hoc подпись (prepare.sh делает это и сам, но пусть будет)
-codesign --force -s - "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image" 2>/dev/null || \
+codesign --force -s - "$DIST/stage/mke2fs" "$DIST/stage/debugfs" "$DIST/stage/e2image" \
+                      "$DIST/stage/e2fsck" "$DIST/stage/resize2fs" 2>/dev/null || \
   warn "codesign не прошёл (не критично, prepare.sh подпишет при скачивании)."
-# плоский тарбол: mke2fs, debugfs, e2image в корне
-tar -czf "$DIST/$BUNDLE" -C "$DIST/stage" mke2fs debugfs e2image
+# плоский тарбол: mke2fs, debugfs, e2image, e2fsck, resize2fs в корне
+tar -czf "$DIST/$BUNDLE" -C "$DIST/stage" mke2fs debugfs e2image e2fsck resize2fs
 rm -rf "$DIST/stage"
 
 SHA="$(shasum -a 256 "$DIST/$BUNDLE" | awk '{print $1}')"
 echo
 ok "Готово: $DIST/$BUNDLE"
 echo
-printf "%s─── Вставь это в prepare.sh ───%s\n" "$c_cyn" "$c_rst"
+printf "%s─── Вставь это в backup.sh И prepare.sh ───%s\n" "$c_cyn" "$c_rst"
 printf "E2FS_RELEASE_TAG=\"e2fsprogs-v%s-macos\"   # или свой тег\n" "$E2FS_VER"
 printf "E2FS_BUNDLE_SHA256=\"%s\"\n" "$SHA"
 echo
