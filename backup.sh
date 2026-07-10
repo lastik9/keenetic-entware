@@ -438,9 +438,20 @@ do_restore() {
   DISK="$(pick_disk 'Выбери флешку для ЗАПИСИ образа (будет СТЁРТА):')"
   RAW="${DISK/\/dev\/disk/\/dev\/rdisk}"
   EXT4_RAW="${RAW}s2"
-  # проверка вместимости
+  # Проверка вместимости.
+  #   Образ с УЖАТОЙ ФС: размер исходного ДИСКА не значит ничего — важно лишь,
+  #   влезет ли ФС в целевой РАЗДЕЛ. Это проверяется ниже (img_bytes vs part_bytes),
+  #   уже после создания разметки. Так что лить 64 ГБ -> 16 ГБ можно, если данных мало.
+  #   Старый образ (без ext4_fs_bytes): dd пишет до границы ФС = во весь раздел
+  #   источника, поэтому целевая флешка обязана быть не меньше исходной.
   local dst_bytes; dst_bytes="$(disk_size_bytes "$DISK")"
-  if [[ -n "$src_bytes" && -n "$dst_bytes" && "$src_bytes" -gt "$dst_bytes" ]]; then
+  if [[ "$fs_was_shrunk" == "1" ]]; then
+    if [[ -n "$src_bytes" && -n "$dst_bytes" && "$src_bytes" -gt "$dst_bytes" ]]; then
+      warn "Целевая флешка меньше исходной ($dst_bytes Б < $src_bytes Б)."
+      warn "Это допустимо: ФС в образе ужата до $(( src_ext4_bytes / 1024 / 1024 )) МБ."
+      warn "Проверю, влезет ли она в раздел целевой флешки."
+    fi
+  elif [[ -n "$src_bytes" && -n "$dst_bytes" && "$src_bytes" -gt "$dst_bytes" ]]; then
     die "Образ снят с флешки $src_bytes Б, целевая — $dst_bytes Б. Нужна флешка не меньше исходной."
   fi
   local desc; desc="$(diskutil info "$DISK" | awk -F: '/Device \/ Media Name|Disk Size/ {gsub(/^ +/,"",$2); print $2}' | paste -sd', ' -)"
@@ -483,7 +494,8 @@ do_restore() {
       img_bytes="$part_bytes"
     fi
     if [[ "$img_bytes" -gt "$part_bytes" ]]; then
-      die "ФС образа ($img_bytes Б) больше целевого раздела ($part_bytes Б). Нужна флешка крупнее."
+      err "ФС образа: $(( img_bytes / 1024 / 1024 )) МБ, целевой раздел: $(( part_bytes / 1024 / 1024 )) МБ."
+      die "Не влезает. Нужна флешка крупнее."
     fi
     local tmpimg="$WORKDIR/restore-fs.img"
     truncate -s "$img_bytes" "$tmpimg" 2>/dev/null || mkfile -n "${img_bytes}" "$tmpimg" 2>/dev/null || \
