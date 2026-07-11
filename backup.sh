@@ -210,6 +210,13 @@ shrink_fs() {
     return 1
   fi
   run "diskutil unmountDisk force $DISK"
+  # resize2fs -P строже e2fsck -fn: требует ПРОИГРАННЫЙ журнал, иначе
+  # "Please run e2fsck first" уходит в stderr и минимум не считается.
+  # e2fsck -fn (предчек) журнал не проигрывает -> проигрываем здесь один раз.
+  if [[ -n "$E2FSCK" ]]; then
+    sudo "$E2FSCK" -fy "$part" >/dev/null 2>&1 || true
+    run "diskutil unmountDisk force $DISK"
+  fi
   min_blocks="$(sudo "$RESIZE2FS" -P "$part" 2>/dev/null \
                  | sed -n 's/.*minimum size of the filesystem: *\([0-9][0-9]*\).*/\1/p' | head -1)"
   if [[ ! "$min_blocks" =~ ^[0-9]+$ ]] || [[ "$min_blocks" -le 0 ]]; then
