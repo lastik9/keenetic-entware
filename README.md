@@ -370,42 +370,41 @@ umount ~/smb-opkg                                       # отключить
 
 ### macOS
 
+Одной командой — появится меню:
+
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
 ```
 
-Можно и сразу режимом, аргументом. Чтобы не повторять длинный URL, положи его в переменную:
+Если нужен конкретный режим — скачай скрипт:
 
 ```
-URL=https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
-
-bash <(curl -fsSL $URL)                  # меню
-bash <(curl -fsSL $URL) backup           # снять образ
-bash <(curl -fsSL $URL) restore          # развернуть образ (флешка будет стёрта)
-bash <(curl -fsSL $URL) clone            # снять и сразу залить на другую флешку
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
 ```
 
-В режиме `restore` можно указать файл сразу — иначе скрипт покажет меню выбора:
+и запусти **одну** из команд:
 
-```
-bash <(curl -fsSL $URL) restore keenetic-backup-XXXX.kbak
-```
+- `bash backup.sh` — меню
+- `bash backup.sh backup` — снять образ в файл `.kbak`
+- `bash backup.sh restore` — развернуть образ на флешку (**флешка будет стёрта**)
+- `bash backup.sh clone` — снять образ и сразу залить на другую флешку
+
+В режиме `restore` можно указать файл сразу, иначе скрипт покажет меню выбора:
+`bash backup.sh restore keenetic-backup-XXXX.kbak`
 
 ### Linux (нативный)
 
 ```
 curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh
 chmod +x backup-linux.sh
-./backup-linux.sh              # меню: backup / restore / clone
 ```
 
-Или сразу режимом:
+Дальше — **одна** из команд:
 
-```
-./backup-linux.sh backup       # снять образ в файл .kbak
-./backup-linux.sh restore      # развернуть образ на флешку (СТИРАЕТ её)
-./backup-linux.sh clone        # снять образ и сразу залить на другую флешку
-```
+- `./backup-linux.sh` — меню: backup / restore / clone
+- `./backup-linux.sh backup` — снять образ в файл `.kbak`
+- `./backup-linux.sh restore` — развернуть образ на флешку (**флешка будет стёрта**)
+- `./backup-linux.sh clone` — снять образ и сразу залить на другую флешку
 
 Скрипт сам поднимет права через `sudo` и доустановит `e2fsprogs`/`util-linux` через `apt`, если их нет. Больше ничего не требуется — бинарники не скачиваются, всё берётся из репозиториев дистрибутива.
 
@@ -422,14 +421,12 @@ cd "путь\к\папке"
 powershell -ExecutionPolicy Bypass -File .\backup.ps1
 ```
 
-Режимы:
+Запуск без параметров даёт меню. Либо **одна** из команд:
 
-```
-.\backup.ps1 -Mode backup            # снять образ флешки в файл .kbak
-.\backup.ps1 -Mode restore           # развернуть образ на флешку (СТИРАЕТ её)
-.\backup.ps1 -Mode clone             # снять образ и сразу залить на другую флешку
-.\backup.ps1 -Mode backup -DryRun    # сухой прогон, на диск ничего не пишется
-```
+- `.\backup.ps1 -Mode backup` — снять образ флешки в файл `.kbak`
+- `.\backup.ps1 -Mode restore` — развернуть образ на флешку (**флешка будет стёрта**)
+- `.\backup.ps1 -Mode clone` — снять образ и сразу залить на другую флешку
+- `.\backup.ps1 -Mode backup -DryRun` — сухой прогон, на диск ничего не пишется
 
 `backup.ps1` — тонкая обёртка: она проверит WSL, доставит `backup-linux.sh` в Ubuntu, пробросит туда флешку через `usbipd-win`, и вся работа с диском будет сделана тем же `backup-linux.sh`, что и на нативном Linux.
 

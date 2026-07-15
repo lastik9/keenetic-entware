@@ -371,42 +371,41 @@ Restore recreates the partition layout, unpacks ext4 from the image, grows the F
 
 ### macOS
 
+One command — a menu appears:
+
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
 ```
 
-You can also go straight to a mode with an argument. To avoid repeating the long URL, put it in a variable:
+If you want a specific mode, download the script:
 
 ```
-URL=https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
-
-bash <(curl -fsSL $URL)                  # menu
-bash <(curl -fsSL $URL) backup           # take an image
-bash <(curl -fsSL $URL) restore          # restore an image (the drive gets erased)
-bash <(curl -fsSL $URL) clone            # image one drive and write it to another
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
 ```
 
-In `restore` mode you can name the file up front — otherwise the script shows a picker menu:
+and run **one** of these:
 
-```
-bash <(curl -fsSL $URL) restore keenetic-backup-XXXX.kbak
-```
+- `bash backup.sh` — menu
+- `bash backup.sh backup` — take an image into a `.kbak` file
+- `bash backup.sh restore` — restore an image onto a drive (**the drive gets erased**)
+- `bash backup.sh clone` — take an image and write it straight to another drive
+
+In `restore` mode you can name the file up front, otherwise the script shows a picker menu:
+`bash backup.sh restore keenetic-backup-XXXX.kbak`
 
 ### Linux (native)
 
 ```
 curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh
 chmod +x backup-linux.sh
-./backup-linux.sh              # menu: backup / restore / clone
 ```
 
-Or straight to a mode:
+Then run **one** of these:
 
-```
-./backup-linux.sh backup       # take an image into a .kbak file
-./backup-linux.sh restore      # write an image to a drive (ERASES it)
-./backup-linux.sh clone        # take an image and write it straight to another drive
-```
+- `./backup-linux.sh` — menu: backup / restore / clone
+- `./backup-linux.sh backup` — take an image into a `.kbak` file
+- `./backup-linux.sh restore` — write an image to a drive (**the drive gets erased**)
+- `./backup-linux.sh clone` — take an image and write it straight to another drive
 
 The script elevates itself with `sudo` and installs `e2fsprogs`/`util-linux` via `apt` if they're missing. Nothing else is needed — no binaries are downloaded, everything comes from the distro repositories.
 
@@ -423,14 +422,12 @@ cd "path\to\folder"
 powershell -ExecutionPolicy Bypass -File .\backup.ps1
 ```
 
-Modes:
+Running it with no parameters gives you a menu. Otherwise, **one** of these:
 
-```
-.\backup.ps1 -Mode backup            # take an image of the drive into a .kbak file
-.\backup.ps1 -Mode restore           # write an image to a drive (ERASES it)
-.\backup.ps1 -Mode clone             # take an image and write it straight to another drive
-.\backup.ps1 -Mode backup -DryRun    # dry run, nothing is written to disk
-```
+- `.\backup.ps1 -Mode backup` — take an image of the drive into a `.kbak` file
+- `.\backup.ps1 -Mode restore` — write an image to a drive (**the drive gets erased**)
+- `.\backup.ps1 -Mode clone` — take an image and write it straight to another drive
+- `.\backup.ps1 -Mode backup -DryRun` — dry run, nothing is written to disk
 
 `backup.ps1` is a thin wrapper: it checks WSL, delivers `backup-linux.sh` into Ubuntu, passes the flash drive through with `usbipd-win`, and all the disk work is done by that same `backup-linux.sh` used on native Linux.
 
