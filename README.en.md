@@ -12,7 +12,7 @@ All three platforms produce an **identical** result: an MBR layout with a swap p
 |---|---|---|---|
 | **macOS** (Intel/Apple Silicon) | `prepare.sh` | natively (`diskutil` + downloaded `mke2fs`/`debugfs`) | tested on hardware |
 | **Linux** (desktop) | `prepare-linux.sh` | natively (`sfdisk` + `e2fsprogs`) | tested |
-| **Windows 10/11** | `prepare.ps1` | via WSL2 — runs `prepare-linux.sh` inside | maturing (see note below) |
+| **Windows 10/11** | `prepare.ps1` | via WSL2 — runs `prepare-linux.sh` inside | tested |
 
 ## Why
 
@@ -85,7 +85,7 @@ DRY_RUN=1 ARCH=mipsel sudo -E bash prepare-linux.sh /dev/sdX
 
 ### Windows
 
-> **⚠️ The Windows branch is maturing.** The Windows 10 path (via `usbipd-win`) has been tested, while the native Windows 11 path (`wsl --mount --bare`) has not yet been verified on real hardware — the script has an automatic fallback to `usbipd` for that case. Test on a **throwaway** flash drive before relying on it. Report problems in Issues.
+> **⚠️ A reboot is required after usbipd is installed.** The flash drive is passed through with `usbipd-win`; on a first-time install its service only starts working after a reboot. The script will notice and tell you.
 
 `prepare.ps1` doesn't partition anything itself: it brings up **WSL2**, passes the flash drive through, and runs `prepare-linux.sh` inside (single source of truth — the same script used on native Linux).
 
@@ -96,11 +96,84 @@ DRY_RUN=1 ARCH=mipsel sudo -E bash prepare-linux.sh /dev/sdX
 powershell -ExecutionPolicy Bypass -File .\prepare.ps1
 ```
 
-From there the script does everything: requests administrator rights (UAC), installs WSL2 and Ubuntu if needed (`--web-download`, bypassing the Store), checks internet inside WSL (and offers to set a public DNS **inside WSL only**, if it's intercepted by a VPN/proxy), detects the Windows version and picks the disk-passthrough method, asks for architecture and drive (confirm by typing `YES`), runs the partitioning, and correctly returns the drive to the system when done.
+From there the script does everything: requests administrator rights (UAC), installs WSL2 and Ubuntu if needed (`--web-download`, bypassing the Store), checks internet inside WSL (and offers to set a public DNS **inside WSL only**, if it's intercepted by a VPN/proxy), passes the flash drive into WSL, asks for architecture and drive (confirm by typing `YES`), runs the partitioning, and correctly returns the drive to the system when done.
 
-On **Windows 10** the passthrough uses `usbipd-win` — the script installs it via `winget` automatically and detects the right USB device by VID:PID (if it can't, it shows the list and asks you to enter the BUSID).
+**The passthrough uses `usbipd-win` — identically on Windows 10 and Windows 11.** The script installs it via `winget` automatically and detects the right USB device by VID:PID (if it can't, it shows the list and asks you to enter the BUSID). The native `wsl --mount` does not work for removable USB drives (see [below](#why-wsl---mount-is-no-good-for-flash-drives)), so for flash drives it isn't even attempted.
+
+> **⚠️ Don't run it through `| Tee-Object`.** The pipe re-encodes the output a second time in the outer PowerShell and mangles non-ASCII text, no matter what encoding settings are in place. If you need a log, use `Start-Transcript`.
 
 Optional parameters: `-Arch mipsel|mips|aarch64` — skip the menu; `-KeepWslDns` — don't touch WSL DNS; `-LinuxScript <path>` — use a specific `prepare-linux.sh`.
+
+### Why `wsl --mount` is no good for flash drives
+
+`wsl --mount --bare \\.\PHYSICALDRIVE<N>` is the built-in Windows 11 way to hand a physical disk to WSL2 without third-party tools. For **removable** USB drives it fails consistently:
+
+```
+Wsl/Service/AttachDisk/MountDisk/HCS/0x8007000f   (ERROR_INVALID_DRIVE)
+```
+
+Reproduced on Windows 11 build 26200 with different flash drives. The command is designed for non-removable physical disks and won't take removable media. That's why the project's scripts check whether the disk is removable (`Win32_DiskDrive.MediaType`) and go straight to `usbipd-win` for flash drives instead of wasting time on an attempt that's certain to fail.
+
+### If WSL isn't installed
+
+```powershell
+wsl --install -d Ubuntu --web-download
+```
+
+Reboot, then wait for Ubuntu's first-run setup (UNIX login/password). On a healthy system this takes under a minute plus one reboot. You don't need internet inside WSL: the Ubuntu image already ships `e2fsprogs` and `util-linux`.
+
+#### If the install hangs
+
+`wsl --install` runs through **DISM**, and on a damaged Windows it hangs dead: the spinner sits still, the CPU is idle. To tell "slow" from "hung":
+
+```powershell
+Get-Item C:\Windows\Logs\DISM\dism.log | Select-Object LastWriteTime
+```
+
+Run it twice a minute apart. The timestamp moves — work is happening, keep waiting. It doesn't move for 5+ minutes — it's hung.
+
+**Don't interrupt DISM halfway** — reboot instead; components often finish applying during boot.
+
+#### Diagnostics
+
+```powershell
+# Features (this is a flag, not a fact!)
+Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform | Select FeatureName, State
+Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux | Select FeatureName, State
+
+# Hypervisor and BIOS virtualization
+Get-ComputerInfo -Property HyperVisorPresent, HyperVRequirementVirtualizationFirmwareEnabled
+
+# The key check: the service must exist
+Get-Service vmcompute | Select Name, Status, StartType
+```
+
+Worth knowing:
+
+- **`wsl --status` lies.** It prints "virtualization is not enabled" whenever the VM fails to start — even when virtualization is perfectly fine. Don't trust the text, look at `vmcompute`.
+- **`VirtualMachinePlatform = Enabled` means nothing on its own.** If the `vmcompute` service is missing at the same time, the feature is listed as enabled but was never actually deployed. That's a sign of a corrupted Windows component store (WinSxS).
+- **`vmcompute` sitting at `Stopped / Manual` is normal** — the service starts on demand.
+
+#### Workarounds
+
+```powershell
+# 1. Features one at a time — they go through more readily than wsl --install in one go
+dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+# then reboot
+
+# 2. Hypervisor doesn't start (HyperVisorPresent: False while BIOS virtualization is True)
+bcdedit /enum {current} | findstr /i hypervisorlaunchtype
+bcdedit /set hypervisorlaunchtype auto
+# then reboot
+
+# 3. The WSL2 kernel directly, bypassing DISM:
+#    download wsl.<version>.x64.msi from https://github.com/microsoft/WSL/releases/latest
+#    install with a double-click, reboot
+wsl --version   # prints versions if the engine came up
+```
+
+If DISM **and** `sfc /scannow` both hang while the disk is healthy, the Windows component store is corrupted. Fix it with `dism /online /cleanup-image /restorehealth` (needs internet) or by reinstalling. Digging further is pointless: this isn't "slow", it's a broken Windows.
 
 ## Architecture cheat-sheet
 
@@ -275,16 +348,28 @@ umount ~/smb-opkg                                       # unmount
 
 ## Backup and restore
 
-USB flash drives run 24/7 in the router and wear out over time. `backup.sh` takes a **smart image** of a working drive (only the used ext4 blocks — via `e2image`), so when a drive dies you can restore a working Entware/XKeen onto a new drive in a minute instead of setting it up from scratch.
+USB flash drives run 24/7 in the router and wear out over time. The backup scripts take a **smart image** of a working drive (only the used ext4 blocks — via `e2image`), so when a drive dies you can restore a working Entware/XKeen onto a new drive in a minute instead of setting it up from scratch.
 
-> For now `backup.sh` is **macOS only**. Windows and Linux versions are planned. On Linux you can take an image manually for the time being: `sudo e2image -ra -p /dev/sdX2 backup.img` (the `OPKG` partition).
+Available on **all three OSes**:
+
+| Task | macOS | Linux (native) | Windows 10/11 |
+|---|---|---|---|
+| Prepare the drive | `prepare.sh` | `prepare-linux.sh` | `prepare.ps1` |
+| Backup / restore / clone | `backup.sh` | `backup-linux.sh` | `backup.ps1` |
+| Router setup | `router-setup.sh` — over SSH from any OS | | |
+
+The `.kbak` format is **the same on all three** — an image taken on a Mac restores on Windows and vice versa.
 
 The image is compact: from a 64 GB drive holding ~1.1 GB of data, the file is ~53–75 MB (not 64 GB), and it takes seconds.
 
-The simplest way is to run `backup.sh` **without arguments** — a menu appears:
+All three scripts offer the same three modes, all available from a **menu** (run with no arguments):
 - **backup** — take an image of the drive into a `.kbak` file;
 - **restore** — write an image to a drive (the script shows the list of found `.kbak` files, no typing needed);
 - **clone** — take an image from one drive and write it straight to another (no intermediate file name).
+
+Restore recreates the partition layout, unpacks ext4 from the image, grows the FS to the whole partition, and prepares the swap partition. The clone carries everything: Entware, packages, configs, init scripts, SSH keys.
+
+### macOS
 
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
@@ -300,7 +385,55 @@ bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/mai
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) restore keenetic-backup-XXXX.kbak
 ```
 
-Restore recreates the partition layout, unpacks ext4 from the image, grows the FS to the whole partition, and prepares the swap partition. The clone carries everything: Entware, packages, configs, init scripts, SSH keys.
+### Linux (native)
+
+```
+curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh -o backup-linux.sh
+chmod +x backup-linux.sh
+./backup-linux.sh              # menu: backup / restore / clone
+```
+
+Or straight to a mode:
+
+```
+./backup-linux.sh backup       # take an image into a .kbak file
+./backup-linux.sh restore      # write an image to a drive (ERASES it)
+./backup-linux.sh clone        # take an image and write it straight to another drive
+```
+
+The script elevates itself with `sudo` and installs `e2fsprogs`/`util-linux` via `apt` if they're missing. Nothing else is needed — no binaries are downloaded, everything comes from the distro repositories.
+
+Environment variables: `DEV=/dev/sdX` — name the device up front and skip the interactive picker; `DRY_RUN=1` — write nothing to disk; `NO_SHRINK=1` — don't shrink the FS before imaging; `KBAK_OUT=<path>` — where to put the `.kbak`.
+
+### Windows 10 / 11
+
+You'll need: **WSL2 with Ubuntu**, administrator rights, and `usbipd-win` (installed automatically). If you don't have WSL yet, see ["If WSL isn't installed"](#if-wsl-isnt-installed).
+
+Put [`backup.ps1`](backup.ps1) and [`backup-linux.sh`](backup-linux.sh) **in the same folder**, open PowerShell **as administrator**, and run:
+
+```
+cd "path\to\folder"
+powershell -ExecutionPolicy Bypass -File .\backup.ps1
+```
+
+Modes:
+
+```
+.\backup.ps1 -Mode backup            # take an image of the drive into a .kbak file
+.\backup.ps1 -Mode restore           # write an image to a drive (ERASES it)
+.\backup.ps1 -Mode clone             # take an image and write it straight to another drive
+.\backup.ps1 -Mode backup -DryRun    # dry run, nothing is written to disk
+```
+
+`backup.ps1` is a thin wrapper: it checks WSL, delivers `backup-linux.sh` into Ubuntu, passes the flash drive through with `usbipd-win`, and all the disk work is done by that same `backup-linux.sh` used on native Linux.
+
+> **⚠️ Don't run it through `| Tee-Object`** — the pipe mangles the encoding. If you need a log, use `Start-Transcript`.
+
+**First run:** `usbipd-win` will be installed (via `winget`). After it installs, a **reboot is mandatory** — its service doesn't work until then. The script will tell you.
+
+`.kbak` files are placed in `C:\Temp` (`/mnt/c/Temp` from inside WSL). That's deliberate: a path with no spaces or non-ASCII characters works the same whatever the Windows user name is.
+
+On Windows the `clone` mode is orchestrated by the wrapper itself, because WSL can only hold one disk attached at a time: image the source → detach → attach the target → restore.
 
 > **After a restore, be sure to enable swap on the router** — otherwise XKeen will crash. See ["After a restore XKeen crashes with out of memory"](#after-a-restore-xkeen-crashes-with-out-of-memory).
 
@@ -330,7 +463,9 @@ If something goes wrong during backup (Ctrl-C, drive yanked), the script traps t
 
 ### Cloning onto a smaller drive
 
-With shrink this became possible: what matters is not the source drive's size but **whether the data fits** the target partition. A system from a 64 GB drive with 1.1 GB used can be deployed onto a 16 GB one — the FS then grows to the new size.
+With shrink this became possible: what matters is not the source drive's size but **whether the data fits** the target partition. A system from a 64 GB drive with 1.1 GB used can be deployed onto a 16 GB one — the FS then grows to the new size. Works on **all three OSes**.
+
+Verified on a live router: an image taken from a 32 GB drive on Windows was restored onto 16 GB — the Keenetic brought up Entware, swap and XKeen with no adjustments.
 
 The script warns that the target drive is smaller and checks capacity. For **old** images (taken before shrink existed) the old rule holds: the target drive must be no smaller than the source.
 
@@ -411,10 +546,15 @@ e2fsck -f "$DEV" && resize2fs "$DEV"
 - **Linux / Windows(WSL)** — partitioning and type IDs in a single `sfdisk` call; old signatures are wiped with `wipefs`.
 - On all platforms ext4 is created with `mke2fs -F -t ext4 -L OPKG -O ^64bit,^metadata_csum`, and the installer is written into the ext4 partition with `debugfs` — **without mounting** (ext4 doesn't need mounting, and macOS can't do it anyway).
 - The **swap partition is not formatted** by the preparation script: `mkswap` and activation are done by `router-setup.sh` on the router (by the `SWAP` label). The script only wipes the FAT signature off it, so the router doesn't mistake it for VFAT.
-- **Windows** partitions nothing itself: `prepare.ps1` passes the physical disk into WSL2 (`wsl --mount --bare` on Win11 or `usbipd-win` on Win10) and runs `prepare-linux.sh` there.
+- **Windows** partitions nothing itself: `prepare.ps1` passes the physical disk into WSL2 via `usbipd-win` (`wsl --mount` doesn't work for removable media) and runs `prepare-linux.sh` there.
 
-**Backup/restore (macOS only for now):**
-- Backup uses `e2image` (used blocks only). Restore expands `e2image` into a file the size of the FS from the image and writes it to the partition via `dd` **in full, without** `conv=sparse` — skipping zero blocks would leave garbage from the old layout in their place and corrupt the FS. Shrinking the FS before backup is safe and shortens `dd` at the **FS boundary** — which is fundamentally not the same as `sparse`.
+**Backup/restore:**
+- Backup uses `e2image` (used blocks only). Shrinking the FS before backup is safe and shortens the write at the **FS boundary** — which is fundamentally not the same as `sparse`.
+- The `.kbak` format is a plain `tar.gz` of three files: `mbr.bin` (the layout), `opkg.e2img` (the FS image) and `meta.txt` (metadata, including the shrunk FS size). **Identical across all three OSes** — an image taken on a Mac restores on Linux and Windows, and vice versa.
+- **On Linux/WSL `e2image -ra` writes straight into the block device** — no intermediate file needed. Partitioning is a single `sfdisk` call (`,1024M,82` / `,,83`), bit-for-bit the same layout as `prepare-linux.sh`. Tools come from `e2fsprogs`/`util-linux` via `apt` — no downloaded bundles.
+- **On macOS** `e2image` **can't write to a raw device** (`/dev/rdiskNsX`) — it returns `block -1`. So restore first expands the image into a file the size of the FS, then writes that file to the partition via `dd` **in full, without** `conv=sparse` — skipping zero blocks would leave garbage from the old layout in their place and corrupt the FS.
+- The ext4 partition is found by the `OPKG` label (`blkid`) on Linux/Windows, with a fallback to the second partition; on macOS it's hard-wired to the second partition.
+- None of the scripts run `mkswap`: the swap partition is only wiped, and the signature and label are written by `router-setup.sh` on the router.
 - `resize2fs`, unlike `e2image`, works with the macOS **block** device (`/dev/diskNsX`) without complaints.
 - The shrunk FS size is taken **from `resize2fs` output**, not from a calculation: it rounds the requested size down to a block-group boundary (e.g. ask for 131550 blocks, get 131072). Writing the calculated number into metadata would under-write the tail during `dd` and quietly corrupt the FS.
 - `resize2fs -P` (minimum size) systematically underestimates, so the script keeps a margin: `+30%`, but no less than `+8192` blocks.
@@ -425,9 +565,8 @@ e2fsck -f "$DEV" && resize2fs "$DEV"
   sudo e2fsck -fn /dev/diskNs2 | tail -15
   ```
   A healthy result is 5 passes with no `Fix?` or `illegal block` lines, ending with `OPKG: NNNN/... files`.
-- `e2image` **can't write to a macOS raw device** (`/dev/rdiskNsX`) — it returns `block -1`. So restore first expands the image into a file, then writes the file to the partition via `dd`.
-- The `mke2fs`/`debugfs`/`e2image` binaries are built from e2fsprogs as **universal** (arm64 + x86_64), statically linked internally, so they depend only on `/usr/lib/libSystem`. See [BUILD.md](BUILD.md) to rebuild them yourself.
-- `e2fsck` and `resize2fs` are **not yet** in the downloaded bundle: if Homebrew's `e2fsprogs` is installed, the script uses them from there. Without Homebrew, the FS check and shrink are skipped — backup and restore still work, just slower and without a pre-check. Adding both tools to the bundle is planned.
+- The macOS `mke2fs`/`debugfs`/`e2image` binaries are built from e2fsprogs as **universal** (arm64 + x86_64), statically linked internally, so they depend only on `/usr/lib/libSystem`. See [BUILD.md](BUILD.md) to rebuild them yourself. On Linux and Windows nothing needs downloading.
+- `e2fsck` and `resize2fs` are **not yet** in the downloaded macOS bundle: if Homebrew's `e2fsprogs` is installed, the script uses them from there. Without Homebrew, the FS check and shrink are skipped — backup and restore still work, just slower and without a pre-check. Adding both tools to the bundle is planned.
 
 ## Building the binaries yourself
 
@@ -437,7 +576,7 @@ See [BUILD.md](BUILD.md). In short: `bash build-macos-e2fsprogs.sh` downloads th
 
 - Only **removable** drives are listed — the system disk can't be selected.
 - You must type the exact device name (or `YES` on Windows) to confirm before anything is erased.
-- The downloaded binary bundle is checked against a pinned SHA-256.
+- The downloaded binary bundle (macOS only) is checked against a pinned SHA-256. On Linux and Windows the tools come from the distro repositories, so there's nothing to download.
 - Change the default SSH password (`passwd root`) — `router-setup.sh` offers this itself.
 
 ## Credits
