@@ -67,7 +67,7 @@ IGNORE_BREW=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenet
 Разметка требует root, поэтому скрипт удобнее сначала скачать, а затем запустить через `sudo`:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare-linux.sh -o prepare-linux.sh
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare-linux.sh
 sudo bash prepare-linux.sh
 ```
 
@@ -374,20 +374,27 @@ umount ~/smb-opkg                                       # отключить
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
 ```
 
-Можно и по-старому, аргументом:
+Можно и сразу режимом, аргументом. Чтобы не повторять длинный URL, положи его в переменную:
 
 ```
-# снять образ:
-bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) backup
+URL=https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
 
-# восстановить на флешку (будет стёрта); без имени файла — покажет меню выбора:
-bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) restore keenetic-backup-XXXX.kbak
+bash <(curl -fsSL $URL)                  # меню
+bash <(curl -fsSL $URL) backup           # снять образ
+bash <(curl -fsSL $URL) restore          # развернуть образ (флешка будет стёрта)
+bash <(curl -fsSL $URL) clone            # снять и сразу залить на другую флешку
+```
+
+В режиме `restore` можно указать файл сразу — иначе скрипт покажет меню выбора:
+
+```
+bash <(curl -fsSL $URL) restore keenetic-backup-XXXX.kbak
 ```
 
 ### Linux (нативный)
 
 ```
-curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh -o backup-linux.sh
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh
 chmod +x backup-linux.sh
 ./backup-linux.sh              # меню: backup / restore / clone
 ```
@@ -480,7 +487,8 @@ fatal error: runtime: out of memory
 Это **не повреждение образа**. Лечится одной командой на роутере — пункт **3) Только swap** в `router-setup.sh`:
 
 ```
-wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh && sh /tmp/rs.sh
+wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
+sh /tmp/rs.sh
 ```
 
 Скрипт найдёт swap-раздел по разметке (метки-то нет), поставит метку и сигнатуру, включит своп и пропишет автозапуск. Проверить:

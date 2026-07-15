@@ -67,7 +67,7 @@ IGNORE_BREW=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenet
 Partitioning needs root, so it's easiest to download the script first and then run it with `sudo`:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare-linux.sh -o prepare-linux.sh
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare-linux.sh
 sudo bash prepare-linux.sh
 ```
 
@@ -375,20 +375,27 @@ Restore recreates the partition layout, unpacks ext4 from the image, grows the F
 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh)
 ```
 
-You can still use arguments the old way:
+You can also go straight to a mode with an argument. To avoid repeating the long URL, put it in a variable:
 
 ```
-# take an image:
-bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) backup
+URL=https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh
 
-# restore onto a drive (it will be erased); without a file name it shows a picker menu:
-bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup.sh) restore keenetic-backup-XXXX.kbak
+bash <(curl -fsSL $URL)                  # menu
+bash <(curl -fsSL $URL) backup           # take an image
+bash <(curl -fsSL $URL) restore          # restore an image (the drive gets erased)
+bash <(curl -fsSL $URL) clone            # image one drive and write it to another
+```
+
+In `restore` mode you can name the file up front — otherwise the script shows a picker menu:
+
+```
+bash <(curl -fsSL $URL) restore keenetic-backup-XXXX.kbak
 ```
 
 ### Linux (native)
 
 ```
-curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh -o backup-linux.sh
+curl -fsSLO https://raw.githubusercontent.com/lastik9/keenetic-entware/main/backup-linux.sh
 chmod +x backup-linux.sh
 ./backup-linux.sh              # menu: backup / restore / clone
 ```
@@ -481,7 +488,8 @@ fatal error: runtime: out of memory
 This is **not image corruption**. It's fixed with one command on the router — option **3) Swap only** in `router-setup.sh`:
 
 ```
-wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh && sh /tmp/rs.sh
+wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
+sh /tmp/rs.sh
 ```
 
 The script finds the swap partition by the layout (the label is gone), sets the label and signature, enables swap, and registers autostart. Verify:
