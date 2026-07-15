@@ -32,6 +32,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $env:WSL_UTF8 = "1"   # make wsl.exe emit UTF-8, otherwise -l/--version come with null bytes
+# Вывод WSL/bash — UTF-8; без этого русский текст в консоли идёт кракозябрами.
+# ВАЖНО: запускать скрипт БЕЗ '| Tee-Object' — пайп во внешний powershell перекодирует
+# байты второй раз и ломает вывод. Нужен лог — используй Start-Transcript.
+try {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  $OutputEncoding = [System.Text.UTF8Encoding]::new()
+} catch { }
 $RepoRaw = "https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare-linux.sh"
 $Distro  = "Ubuntu"
 $TmpDir  = "C:\Temp"           # latin path - bypass cyrillic in the user name
@@ -228,18 +235,42 @@ function Choose-UsbDisk {
   if ($disk.IsBoot -or $disk.IsSystem) { Die "Выбран системный/загрузочный диск. Отказ." }
   $gb = [math]::Round($disk.Size/1GB,1)
   Warn "Диск $($disk.Number) ($($disk.FriendlyName), $gb GB) будет ПОЛНОСТЬЮ СТЁРТ."
-  $c = Read-Host "Введи 'YES' для подтверждения"
-  if ($c -ne "YES") { Die "Не подтверждено. Отмена." }
+  # -cne, а НЕ -ne: обычный -ne в PowerShell регистронезависим, и 'yes' проходило бы.
+  $c = Read-Host "Введи 'YES' (заглавными) для подтверждения"
+  if ($c -cne "YES") { Die "Не подтверждено. Отмена." }
   return $disk
 }
 
 # ---------------------------------------------------------------- 6a. passthrough: Win11 (mount)
+# ВАЖНО: вывод wsl.exe нельзя оставлять "голым" — он утечёт в возвращаемое значение
+# функции, и вместо $false вернётся массив (истинный!), из-за чего fallback на usbipd
+# не сработает. Весь вывод ловим в переменную и печатаем через Write-Host.
 function Attach-Win11([int]$diskNumber) {
+  # Проверено на живой Win11 (build 26200, 15.07.2026): для СЪЁМНЫХ USB-флешек
+  # wsl --mount --bare стабильно падает с Wsl/Service/AttachDisk/MountDisk/HCS/0x8007000f
+  # (ERROR_INVALID_DRIVE). Нативный путь пригоден лишь для нес'ёмных дисков —
+  # для флешек сразу идём в usbipd, не тратя время на заведомо провальную попытку.
+  $removable = $false
+  try {
+    $dd = Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Where-Object { $_.Index -eq $diskNumber }
+    if ($dd -and $dd.MediaType -match 'Removable') { $removable = $true }
+  } catch { }
+  if ($removable) {
+    Info "Съёмный USB-накопитель: wsl --mount для таких не работает (0x8007000f) - иду через usbipd."
+    return $false
+  }
+
   $path = "\\.\PHYSICALDRIVE$diskNumber"
   Info "Пробрасываю $path в WSL (wsl --mount --bare)..."
-  wsl.exe --mount --bare $path
-  if ($LASTEXITCODE -ne 0) {
-    Warn "wsl --mount не сработал - пробую usbipd (как на Win10)..."
+  $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  $out = ""; $rc = 1
+  try {
+    $out = (& wsl.exe --mount --bare $path 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    $rc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $old }
+  if ($out) { Write-Host $out }
+  if ($rc -ne 0) {
+    Warn "wsl --mount не сработал (код $rc) - пробую usbipd (как на Win10)..."
     return $false
   }
   Start-Sleep -Seconds 2
@@ -261,6 +292,17 @@ function Ensure-Usbipd {
   if ($svc -and $svc.Status -ne "Running") {
     Info "Запускаю службу usbipd..."
     try { Start-Service usbipd } catch { Warn "Не смог запустить службу usbipd: $_" }
+    Start-Sleep -Seconds 1
+    $svc = Get-Service usbipd -ErrorAction SilentlyContinue
+  }
+  # Свежеустановленный usbipd не работает до перезагрузки ("The service is currently not
+  # running; a reboot should fix that"). Без этой проверки скрипт молотит 5 бесполезных
+  # ретраев attach и падает по таймауту с невнятной ошибкой. Проверено на Win11 15.07.2026.
+  if (-not $svc -or $svc.Status -ne "Running") {
+    Write-Host ""
+    Warn "Служба usbipd установлена, но не запущена - так бывает сразу после её установки."
+    Write-Host "    ПЕРЕЗАГРУЗИ компьютер и запусти prepare.ps1 снова." -ForegroundColor Cyan
+    Die "Нужна перезагрузка после установки usbipd."
   }
 }
 
