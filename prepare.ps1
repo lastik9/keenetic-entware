@@ -412,9 +412,15 @@ function Attach-Usbipd($disk) {
   # RC=1 отказ) — как в блоке 'wsl --mount' выше. Поиск слов в тексте
   # ('error|failed|state') не годится: 'state' встречается в безобидном выводе,
   # а настоящая причина отказа при этом выбрасывалась и диагностика шла вслепую.
+  # Число попыток: 10, паузы нарастающие. Обоснование — факт, не теория:
+  # на здоровой отлаженной Win10 attach поехал с 5-й попытки ИЗ ПЯТИ (запас нулевой),
+  # ручное воспроизведение следом дало 3-ю из 3. Разброс 1..5 при 'Device in error state'.
+  # Это флак устройства/контроллера, он ретраебельный и одинаковыми паузами не лечится.
+  $maxAttempts = 10
+  $retryDelays = @(3, 3, 5, 5, 8, 8, 12, 12, 15)   # пауза ПОСЛЕ попытки $a -> индекс $a-1
   Info "Прицепляю флешку к WSL (attach с повторами)..."
   $attached = $false
-  for ($a = 1; $a -le 5; $a++) {
+  for ($a = 1; $a -le $maxAttempts; $a++) {
     Assert-WslKeepAlive     # без запущенного дистрибутива attach бессмыслен
     $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $out = (& usbipd.exe attach --wsl --busid $busid 2>&1 | ForEach-Object { "$_" }) -join "`n"
@@ -424,7 +430,9 @@ function Attach-Usbipd($disk) {
     if ($out) { Write-Host $out }   # usbipd называет причину внятно — не выбрасывать
     if ($rc -eq 0) { $attached = $true; Ok "attach прошёл с попытки $a (RC=0)."; break }
 
-    Warn "Попытка $a не удалась (RC=$rc)."
+    Warn "Попытка $a из $maxAttempts не удалась (RC=$rc)."
+    # 'Device in error state' — НЕ повод выходить из цикла: устройство просто флакует,
+    # лечится повтором. Раньше времени не сдаёмся, идём до $maxAttempts.
     # 'already attached' — НЕ успех: привязка может висеть от умершего экземпляра
     # WSL, а устройства в живом при этом нет. Отцепляем и пробуем заново.
     if ($out -match 'already attached') {
@@ -435,7 +443,11 @@ function Attach-Usbipd($disk) {
       Start-Sleep -Seconds 2
       continue
     }
-    if ($a -lt 5) { Info "Повтор через 3 c..."; Start-Sleep -Seconds 3 }
+    if ($a -lt $maxAttempts) {
+      $wait = $retryDelays[$a - 1]
+      Info "Повтор через $wait c..."
+      Start-Sleep -Seconds $wait
+    }
   }
   if (-not $attached) {
     Warn "usbipd об успехе не отчитался - проверяю, появилось ли устройство фактически."
