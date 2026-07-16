@@ -123,15 +123,51 @@ function Ensure-Wsl {
 }
 
 # keep WSL alive (background sleep) so usbipd/attach doesn't lose the VM
+# usbipd на отказе говорит прямо: "There is no WSL 2 distribution running; keep a
+# command prompt to a WSL 2 distribution open to leave it running."
+# ВАЖНО: разовый 'wsl -- <cmd>' (функция Wsl ниже) дистрибутив НЕ удерживает -
+# поднимает и гасит через несколько секунд. Держит только процесс ниже.
 $script:WslKeepAlive = $null
+
+# Дистрибутив реально числится запущенным? ($env:WSL_UTF8=1 задан выше - вывод чистый)
+function Test-WslRunning {
+  $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  $running = @()
+  try {
+    $running = (& wsl.exe -l --running -q 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+  } catch { $running = @() } finally { $ErrorActionPreference = $old }
+  return [bool]($running -contains $Distro)
+}
+
 function Start-WslKeepAlive {
   $script:WslKeepAlive = Start-Process wsl -PassThru -WindowStyle Hidden `
     -ArgumentList "-d",$Distro,"-u","root","--","sleep","1800"
 }
+
+# Проверять ПЕРЕД каждой попыткой attach. Держатель мог не стартовать, умереть,
+# попасть под чужой 'wsl --shutdown' или досидеть свой sleep, пока пользователь
+# отвечал на промпты (архитектура/выбор диска/YES идут ДО attach).
+function Assert-WslKeepAlive {
+  $procAlive = ($null -ne $script:WslKeepAlive) -and (-not $script:WslKeepAlive.HasExited)
+  if ($procAlive -and (Test-WslRunning)) { return }
+
+  if (-not $procAlive) { Warn "Держатель WSL не запущен (процесс вышел) - поднимаю заново." }
+  else { Warn "Держатель WSL жив как процесс, но $Distro не числится запущенным - поднимаю заново." }
+
+  Stop-WslKeepAlive
+  Start-WslKeepAlive
+  Start-Sleep -Seconds 2
+  if (-not (Test-WslRunning)) {
+    Die "Не удалось удержать $Distro запущенным - usbipd attach не к чему цеплять. Проверь вручную: wsl -l --running"
+  }
+  Ok "Держатель WSL поднят, $Distro запущен."
+}
+
 function Stop-WslKeepAlive {
   if ($script:WslKeepAlive -and -not $script:WslKeepAlive.HasExited) {
     Stop-Process -Id $script:WslKeepAlive.Id -Force -ErrorAction SilentlyContinue
   }
+  $script:WslKeepAlive = $null
 }
 
 # run a bash string in WSL, return stdout
@@ -364,29 +400,45 @@ function Attach-Usbipd($disk) {
   }
   $script:UsbipBusid = $busid
 
-  Info "modprobe usb-storage/uas + держу WSL живым..."
+  # modprobe — разовая команда. WSL живым держит НЕ она, а $script:WslKeepAlive.
+  Info "modprobe usb-storage/uas..."
   Wsl "modprobe usb-storage; modprobe uas; echo ok" | Out-Null
 
   Invoke-Usbipd bind --busid $busid
 
   # Однократный attach с повторами (без вечного --auto-attach: тот на некоторых
   # контроллерах зацикливается, дёргает флешку и плодит окна автозапуска).
-  # Первая попытка часто падает 'error state' — вторая/третья проходят.
+  # Успех определяем ТОЛЬКО по коду возврата (проверено вживую: RC=0 успех,
+  # RC=1 отказ) — как в блоке 'wsl --mount' выше. Поиск слов в тексте
+  # ('error|failed|state') не годится: 'state' встречается в безобидном выводе,
+  # а настоящая причина отказа при этом выбрасывалась и диагностика шла вслепую.
   Info "Прицепляю флешку к WSL (attach с повторами)..."
   $attached = $false
   for ($a = 1; $a -le 5; $a++) {
+    Assert-WslKeepAlive     # без запущенного дистрибутива attach бессмыслен
     $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $out = (& usbipd.exe attach --wsl --busid $busid 2>&1 | ForEach-Object { "$_" })
+    $out = (& usbipd.exe attach --wsl --busid $busid 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    $rc  = $LASTEXITCODE
     $ErrorActionPreference = $old
-    if ($out -match 'error|failed|state') {
-      Warn "Попытка $a не удалась, повтор через 3 c..."
-      Start-Sleep -Seconds 3
-    } else {
-      $attached = $true; break
+
+    if ($out) { Write-Host $out }   # usbipd называет причину внятно — не выбрасывать
+    if ($rc -eq 0) { $attached = $true; Ok "attach прошёл с попытки $a (RC=0)."; break }
+
+    Warn "Попытка $a не удалась (RC=$rc)."
+    # 'already attached' — НЕ успех: привязка может висеть от умершего экземпляра
+    # WSL, а устройства в живом при этом нет. Отцепляем и пробуем заново.
+    if ($out -match 'already attached') {
+      Info "usbipd считает устройство уже прицепленным - отцепляю и повторяю."
+      $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+      & usbipd.exe detach --busid $busid 2>&1 | ForEach-Object { Write-Host $_ }
+      $ErrorActionPreference = $old
+      Start-Sleep -Seconds 2
+      continue
     }
+    if ($a -lt 5) { Info "Повтор через 3 c..."; Start-Sleep -Seconds 3 }
   }
   if (-not $attached) {
-    # последняя проверка: вдруг всё же прицепилось, несмотря на текст
+    Warn "usbipd об успехе не отчитался - проверяю, появилось ли устройство фактически."
     Start-Sleep -Seconds 2
   }
 
@@ -398,7 +450,7 @@ function Attach-Usbipd($disk) {
     $has = (Wsl "lsblk -dpno NAME,SIZE,TYPE,MODEL | grep -i disk | grep -iv 'Virtual Disk'") 2>$null
     if ($has -match "sd") { $found = $true; break }
   }
-  if (-not $found) { Die "Флешка не появилась в WSL за ~40 c. Передёрни флешку/USB-порт и повтори." }
+  if (-not $found) { Die "Флешка не появилась в WSL за ~40 c. Причину смотри в тексте usbipd выше. Если ошибок там нет - передёрни флешку/USB-порт и повтори." }
   Ok "Флешка в WSL."
   return $true
 }
