@@ -18,7 +18,11 @@
 #
 # Автоматизация (пропустить набор-подтверждение устройства — обёртка уже
 # подтвердила выбор на стороне Windows):
-#   ASSUME_YES=1 sudo -E bash prepare-linux.sh /dev/sdX
+#   ASSUME_YES=1 bash prepare-linux.sh /dev/sdX
+#
+# NB: 'sudo -E' НЕ использовать — на Ubuntu 24.04+/26.04 sudo игнорирует -E и
+# переменные теряются. Скрипт сам перезапустится через sudo, передав их явно.
+# Запускать из-под обычного пользователя: переменные ставятся ПЕРЕД bash.
 #
 set -euo pipefail
 
@@ -76,7 +80,13 @@ USAGE
 
 if [[ $EUID -ne 0 ]]; then
   info "Нужны права root — перезапускаю через sudo..."
-  exec sudo -E bash "$0" "$@"
+  # ВАЖНО: 'sudo -E' здесь НЕ годится. На Ubuntu 24.04+/26.04 sudo отвечает
+  # "preserving the entire environment is not supported, '-E' is ignored" —
+  # и DRY_RUN/ARCH/ASSUME_YES молча теряются. Для DRY_RUN=1 это означало бы
+  # продолжение как БОЕВОЙ запуск, то есть стёртую флешку вместо проверки.
+  # Передаём переменные явно — это работает независимо от политики sudoers.
+  exec sudo DRY_RUN="${DRY_RUN:-}" ARCH="${ARCH:-}" ASSUME_YES="${ASSUME_YES:-}" \
+       bash "$0" "$@"
 fi
 
 # Интерактивный ввод читаем с /dev/tty (устойчиво к запуску через пайпы)

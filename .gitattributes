@@ -1,0 +1,31 @@
+# Переводы строк — принудительно LF в рабочем дереве на ЛЮБОЙ машине.
+#
+# Зачем: git for Windows по умолчанию ставит core.autocrlf=true и при checkout
+# конвертирует LF -> CRLF. Проверено 16.07.2026 на Win10: свежий 'git clone'
+# дал CRLF во всех восьми текстовых файлах репо (check.ps1: 8 FAIL).
+# Из zip такого не бывает — GitHub отдаёт архив как есть, поэтому грабля
+# пряталась до первого клона.
+#
+# Чем грозит CRLF:
+#   .sh  в WSL/на роутере -> "bad interpreter: No such file or directory".
+#        prepare.ps1 прикрывает только те .sh, что доставляет в WSL сам
+#        (sed -i 's/\r$//'), а router-setup.sh идёт на роутер мимо обёртки,
+#        и README-путь с ручным запуском тоже не прикрыт.
+#   .ps1 PowerShell переварит, но файлы обязаны быть UTF-8 BOM + LF.
+#
+# Записи ниже сильнее core.autocrlf и действуют у всех, кто клонирует репо,
+# включая чистую машину, где про autocrlf никто не знает.
+
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.ps1       text eol=lf
+*.md        text eol=lf
+S51dropbear text eol=lf
+.gitignore  text eol=lf
+
+# Бинарники не трогать (в репо их нет, но .kbak/тарболы ходят рядом).
+*.kbak      binary
+*.tar.gz    binary
+*.png       binary
+*.jpg       binary
