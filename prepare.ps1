@@ -9,15 +9,19 @@
    script used for native Linux). Single source of truth = prepare-linux.sh.
 
  Disk passthrough path (auto-detected):
-   - Windows 11 : native  wsl --mount --bare \\.\PHYSICALDRIVE<N>
-   - Windows 10 : usbipd-win + attach --auto-attach
-                  (on Win10 wsl --mount usually fails with USB flash drives)
+   - USB flash drives (removable), ANY Windows : usbipd-win + attach --auto-attach
+     wsl --mount --bare does NOT work with removable media on any Windows -
+     it fails with Wsl/Service/AttachDisk/MountDisk/HCS/0x8007000f
+     (ERROR_INVALID_DRIVE). Verified on live Win11 build 26200, two flash drives.
+   - Non-removable disks, Windows 11 : native wsl --mount --bare \\.\PHYSICALDRIVE<N>
 
  Requirements: Windows 10/11 x64, internet, administrator rights
                (the script self-elevates via UAC), virtualization enabled in BIOS.
 
  Run:  right-click -> "Run with PowerShell"
        or:  powershell -ExecutionPolicy Bypass -File .\prepare.ps1
+       dry run (nothing is written to the disk):
+            powershell -ExecutionPolicy Bypass -File .\prepare.ps1 -DryRun
 
  WARNING: the selected flash drive will be COMPLETELY WIPED.
 ================================================================================
@@ -27,6 +31,7 @@
 param(
   [string]$Arch = "",          # mipsel|mips|aarch64 - if empty, we ask
   [string]$LinuxScript = "",   # path to prepare-linux.sh; if empty - beside or from git
+  [switch]$DryRun,             # pass DRY_RUN=1 - nothing is written to the disk
   [switch]$KeepWslDns          # do not touch WSL DNS even if there is no internet
 )
 
@@ -81,8 +86,10 @@ Write-Host ""
 # ---------------------------------------------------------------- Windows version
 $win = [System.Environment]::OSVersion.Version
 $IsWin11 = ($win.Build -ge 22000)
-if ($IsWin11) { Info "Windows 11 (build $($win.Build)) - путь: wsl --mount" }
-else          { Info "Windows 10 (build $($win.Build)) - путь: usbipd" }
+# Для СЪЁМНЫХ носителей путь всегда usbipd (wsl --mount их не принимает ни на
+# Win10, ни на Win11) - поэтому здесь не обещаем wsl --mount заранее.
+$winName = if ($IsWin11) { "11" } else { "10" }
+Info "Windows $winName (build $($win.Build)) - флешку пробрасываю через usbipd"
 
 # ---------------------------------------------------------------- 1. WSL2 + Ubuntu
 function Ensure-Wsl {
@@ -473,19 +480,27 @@ try {
   $dev = Find-WslDisk $disk.Size
   Ok "Целевое устройство в WSL: $dev"
 
+  # env-строка для DRY_RUN (подставляется в bash-команду ниже)
+  $DR = if ($DryRun) { "1" } else { "0" }
+  if ($DryRun) { Warn "DRY-RUN: на диск не будет записано ничего." }
+
   Info "Запускаю разметку (prepare-linux.sh)..."
   Write-Host ("-"*70)
-  wsl.exe -d $Distro -u root -- bash -c "cd /root && ARCH=$arch ASSUME_YES=1 bash prepare-linux.sh $dev"
+  wsl.exe -d $Distro -u root -- bash -c "cd /root && DRY_RUN=$DR ARCH=$arch ASSUME_YES=1 bash prepare-linux.sh $dev"
   $rc = $LASTEXITCODE
   Write-Host ("-"*70)
   if ($rc -ne 0) { Die "prepare-linux.sh завершился с ошибкой (код $rc). Флешку не извлекаю." }
 
-  Ok "Готово! Флешка подготовлена."
-  Write-Host ""
-  Write-Host "Дальше - на роутере:" -ForegroundColor Cyan
-  Write-Host "  1. Вставь флешку в Keenetic."
-  Write-Host "  2. Веб-интерфейс -> Общие настройки -> включи OPKG и Ext-файловую систему."
-  Write-Host "  3. Страница OPKG -> выбери накопитель 'OPKG' -> Сохранить."
+  # При dry-run итог печатает сам prepare-linux.sh (диск не тронут) - не дублируем
+  # и НЕ зовём нести флешку в роутер: она не подготовлена.
+  if (-not $DryRun) {
+    Ok "Готово! Флешка подготовлена."
+    Write-Host ""
+    Write-Host "Дальше - на роутере:" -ForegroundColor Cyan
+    Write-Host "  1. Вставь флешку в Keenetic."
+    Write-Host "  2. Веб-интерфейс -> Общие настройки -> включи OPKG и Ext-файловую систему."
+    Write-Host "  3. Страница OPKG -> выбери накопитель 'OPKG' -> Сохранить."
+  }
 }
 finally {
   # return the flash drive to the system correctly
