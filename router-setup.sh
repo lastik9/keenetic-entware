@@ -7,7 +7,7 @@
 # wget-ssl, и только потом качаем этот скрипт. Две команды:
 #
 #   opkg update && opkg install wget-ssl ca-bundle ca-certificates
-#   wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+#   wget -T 15 -t 3 -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 #
 #
 # МЕНЮ при запуске:
@@ -40,29 +40,50 @@ ask() { # ask "вопрос" -> ответ в stdout; пусто если нет
 # Запуск через /dev/tty, т.к. установщик интерактивный, а наш stdin занят трубой.
 XKEEN_GH="https://raw.githubusercontent.com/jameszeroX/XKeen/main/install.sh"
 XKEEN_CDN="https://cdn.jsdelivr.net/gh/jameszeroX/XKeen@main/install.sh"
+# Скачивание с таймаутами. Без --connect-timeout мёртвый IP вешает скрипт НАВСЕГДА:
+# у raw.githubusercontent.com несколько A-записей, и часть из них может не отвечать
+# (проверено 16.07.2026: 185.199.110.133 висел, 185.199.111.133 отдавал за 5 мс).
+# --retry сам переберёт адреса; -f не даст HTML-странице ошибки уехать в sh.
+_fetch() { curl -fsSL --connect-timeout 10 --max-time 120 --retry 2 "$1"; }
 run_xkeen_installer() {
   info "--- Установка XKeen ---"
   command -v curl >/dev/null 2>&1 || { info "Ставлю curl (нужен установщику XKeen)..."; opkg install curl >/dev/null 2>&1; }
-  _src="$XKEEN_GH"
-  info "Проверяю доступность GitHub..."
-  if wget -q --spider "$XKEEN_GH" 2>/dev/null; then
-    ok "GitHub доступен — беру установщик оттуда."
-    _src="$XKEEN_GH"
-  else
-    warn "GitHub недоступен — переключаюсь на зеркало jsDelivr."
-    _src="$XKEEN_CDN"
-  fi
+  command -v curl >/dev/null 2>&1 || { err "curl не установился — установщик XKeen не скачать."; return 1; }
   if [ ! -e "$TTY" ]; then
     warn "Нет терминала (/dev/tty) — не могу запустить интерактивный установщик."
     warn "Запусти вручную:"
-    printf '  cd /tmp && sh -c "$(curl -sSL %s)"\n' "$_src"
+    printf '  cd /tmp && sh -c "$(curl -sSL %s)"\n' "$XKEEN_GH"
     return 1
   fi
+
+  # Качаем СРАЗУ, без предварительной проверки --spider: проверка отдельным
+  # запросом ничего не гарантирует (следующий запрос уйдёт на другой IP), а её
+  # зависание не даёт сработать фолбэку на зеркало. Фолбэк — по ОТКАЗУ скачивания.
+  _installer=/tmp/xkeen-install.sh
+  _src="$XKEEN_GH"
+  info "Качаю установщик XKeen с GitHub..."
+  if _fetch "$XKEEN_GH" > "$_installer" 2>/dev/null && [ -s "$_installer" ]; then
+    ok "Установщик получен с GitHub."
+  else
+    warn "GitHub недоступен — переключаюсь на зеркало jsDelivr."
+    _src="$XKEEN_CDN"
+    if _fetch "$XKEEN_CDN" > "$_installer" 2>/dev/null && [ -s "$_installer" ]; then
+      ok "Установщик получен с jsDelivr."
+    else
+      rm -f "$_installer"
+      err "Не удалось скачать установщик XKeen ни с GitHub, ни с jsDelivr."
+      warn "Проверь интернет на роутере и попробуй вручную:"
+      printf '  cd /tmp && sh -c "$(curl -sSL %s)"\n' "$XKEEN_GH"
+      return 1
+    fi
+  fi
+
   info "Запускаю установщик XKeen (интерактивный — ответь на его вопросы)..."
   echo
   # ввод/вывод установщика привязываем к терминалу
-  ( cd /tmp && sh -c "$(curl -sSL "$_src")" ) < "$TTY" > "$TTY" 2>&1
+  ( cd /tmp && sh "$_installer" ) < "$TTY" > "$TTY" 2>&1
   _rc=$?
+  rm -f "$_installer"
   echo
   if [ "$_rc" -eq 0 ]; then
     ok "Установщик XKeen завершился."

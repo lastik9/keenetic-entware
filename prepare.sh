@@ -314,6 +314,18 @@ fi
 # ----------------------------------------------------------------------------
 run "diskutil eject $DISK" || true
 echo
+if [ "$DRY_RUN" = "1" ]; then
+  ok "Dry-run завершён — диск НЕ тронут."
+  cat <<DRYNEXT
+
+${c_yel}Это была только проверка (DRY_RUN=1).${c_rst}
+Флешка НЕ размечена и НЕ отформатирована — всё, что было бы записано,
+показано выше строками «(dry-run) ...».
+Чтобы выполнить по-настоящему — запусти ту же команду без DRY_RUN.
+DRYNEXT
+  exit 0
+fi
+
 ok "Флешка готова!"
 cat <<NEXT
 
@@ -330,6 +342,6 @@ ${c_cyn}Настройка роутера (swap + подготовка под XK
   Зайди по SSH (root / порт 222) и запусти хелпер — он сам активирует swap
   (с автозапуском) и поставит базовые пакеты. Две команды:
      opkg update && opkg install wget-ssl ca-bundle ca-certificates
-     wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+     wget -T 15 -t 3 -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 
 NEXT
