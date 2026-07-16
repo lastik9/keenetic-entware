@@ -33,6 +33,23 @@
 - **Linux** — любой десктопный дистрибутив; на Debian/Ubuntu недостающие пакеты (`e2fsprogs`, `util-linux`, `curl`) скрипт доставит сам через `apt`. Нужны права `sudo`.
 - **Windows** — Windows 10/11 x64, включённая виртуализация в BIOS/UEFI и работающий **WSL2**. Права администратора скрипт запросит сам (UAC). Всё остальное (WSL, Ubuntu, при необходимости usbipd) он ставит автоматически.
 
+<details>
+<summary>Окружение, на котором всё проверено вживую</summary>
+
+Полный цикл (подготовка → бэкап → restore → clone → роутер) прогнан на:
+
+```
+Windows 11 build 26200.8875, PowerShell 5.1.26100.8875
+WSL 2.7.10.0, ядро 6.18.33.2-microsoft-standard-WSL2
+Ubuntu 26.04 LTS, e2fsprogs 1.47.2
+usbipd-win 5.3.0
+Keenetic, Entware 2025.05-1, XKeen 2.0 (mihomo, TProxy)
+```
+
+Более старые версии тоже должны работать — это не требования, а то,
+что реально проверялось.
+</details>
+
 ## Подготовка флешки
 
 Выбери свою ОС.
@@ -102,7 +119,7 @@ powershell -ExecutionPolicy Bypass -File .\prepare.ps1
 
 > **⚠️ Не запускай через `| Tee-Object`.** Пайп во внешний PowerShell перекодирует вывод второй раз, и русский текст превратится в кракозябры — независимо от настроек кодировки. Нужен лог — используй `Start-Transcript`.
 
-Параметры (необязательные): `-Arch mipsel|mips|aarch64` — пропустить меню; `-KeepWslDns` — не трогать DNS в WSL; `-LinuxScript <путь>` — взять конкретный `prepare-linux.sh`.
+Параметры (необязательные): `-Arch mipsel|mips|aarch64` — пропустить меню; `-DryRun` — сухой прогон (на диск не пишется ничего, но флешку всё равно нужно выбрать и подтвердить); `-KeepWslDns` — не трогать DNS в WSL; `-LinuxScript <путь>` — взять конкретный `prepare-linux.sh`.
 
 ### Почему `wsl --mount` не годится для флешек
 
@@ -249,7 +266,8 @@ cat /proc/$(cat /opt/var/run/dropbear.pid)/comm     # tsmb-server — вот и 
 
 ```
 opkg update && opkg install wget-ssl ca-bundle ca-certificates
-wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+wget -T 15 -t 3 -qO- \
+  https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 ```
 
 Хелпер покажет **меню** из четырёх сценариев:
@@ -434,9 +452,13 @@ powershell -ExecutionPolicy Bypass -File .\backup.ps1
 
 **Первый запуск:** будет установлен `usbipd-win` (через `winget`). После его установки **обязательна перезагрузка** — служба usbipd до неё не работает. Скрипт об этом скажет.
 
-Файлы `.kbak` кладутся в `C:\Temp` (внутри WSL это `/mnt/c/Temp`). Так сделано намеренно: путь без кириллицы и пробелов работает одинаково при любом имени пользователя Windows.
+Готовый `.kbak` при `-Mode backup` кладётся **рядом со скриптом** (изменить — `-OutDir <путь>`). Через `C:\Temp` (внутри WSL это `/mnt/c/Temp`) образ проходит только по дороге: путь без кириллицы и пробелов работает одинаково при любом имени пользователя Windows. При `-Mode clone` образ так и остаётся в `C:\Temp` — скрипт напечатает полный путь; это готовый бэкап источника, удалять его или нет, решаешь сам.
 
 Режим `clone` на Windows оркеструется самой обёрткой: WSL умеет держать проброшенным только один диск за раз, поэтому цикл такой — снять образ с источника → отцепить → подключить целевую флешку → развернуть.
+
+**Одного USB-порта достаточно.** Фазы развязаны файлом: образ сначала пишется в `C:\Temp`, и дальше источник не нужен — скрипт сам предложит вынуть его и вставить целевую флешку. Два порта тоже подойдут, тогда на шаге выбора цели важно не перепутать флешки.
+
+> **⚠️ Клон уносит и UUID файловой системы** — он совпадает с исходной флешкой. Роутер монтирует `/opt` по UUID, поэтому **не вставляй обе флешки в роутер одновременно**: какая из них станет `/opt`, предсказать нельзя. Держи клон как бэкап, а не как вторую рабочую.
 
 > **После восстановления обязательно включи swap на роутере** — иначе XKeen упадёт. См. [«После restore XKeen падает с out of memory»](#после-restore-xkeen-падает-с-out-of-memory).
 
@@ -484,7 +506,8 @@ fatal error: runtime: out of memory
 Это **не повреждение образа**. Лечится одной командой на роутере — пункт **3) Только swap** в `router-setup.sh`:
 
 ```
-wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
+wget -T 15 -t 3 -O /tmp/rs.sh \
+  https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
 sh /tmp/rs.sh
 ```
 

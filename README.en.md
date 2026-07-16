@@ -33,6 +33,23 @@ Per platform:
 - **Linux** — any desktop distro; on Debian/Ubuntu the script installs the missing packages (`e2fsprogs`, `util-linux`, `curl`) itself via `apt`. `sudo` rights required.
 - **Windows** — Windows 10/11 x64, virtualization enabled in BIOS/UEFI, and a working **WSL2**. The script requests administrator rights itself (UAC). Everything else (WSL, Ubuntu, and usbipd if needed) it installs automatically.
 
+<details>
+<summary>The environment everything was verified on</summary>
+
+The full cycle (prepare → backup → restore → clone → router) was run on:
+
+```
+Windows 11 build 26200.8875, PowerShell 5.1.26100.8875
+WSL 2.7.10.0, kernel 6.18.33.2-microsoft-standard-WSL2
+Ubuntu 26.04 LTS, e2fsprogs 1.47.2
+usbipd-win 5.3.0
+Keenetic, Entware 2025.05-1, XKeen 2.0 (mihomo, TProxy)
+```
+
+Older versions should work too — this is not a requirements list,
+just what was actually tested.
+</details>
+
 ## Preparing the drive
 
 Pick your OS.
@@ -102,7 +119,7 @@ From there the script does everything: requests administrator rights (UAC), inst
 
 > **⚠️ Don't run it through `| Tee-Object`.** The pipe re-encodes the output a second time in the outer PowerShell and mangles non-ASCII text, no matter what encoding settings are in place. If you need a log, use `Start-Transcript`.
 
-Optional parameters: `-Arch mipsel|mips|aarch64` — skip the menu; `-KeepWslDns` — don't touch WSL DNS; `-LinuxScript <path>` — use a specific `prepare-linux.sh`.
+Optional parameters: `-Arch mipsel|mips|aarch64` — skip the menu; `-DryRun` — dry run (nothing is written to the disk, but you still pick the drive and confirm); `-KeepWslDns` — don't touch WSL DNS; `-LinuxScript <path>` — use a specific `prepare-linux.sh`.
 
 ### Why `wsl --mount` is no good for flash drives
 
@@ -250,7 +267,8 @@ After Entware is installed, SSH into the router (login `root`, password `keeneti
 
 ```
 opkg update && opkg install wget-ssl ca-bundle ca-certificates
-wget -qO- https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
+wget -T 15 -t 3 -qO- \
+  https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh | sh
 ```
 
 The helper shows a **menu** of four scenarios:
@@ -435,9 +453,13 @@ Running it with no parameters gives you a menu. Otherwise, **one** of these:
 
 **First run:** `usbipd-win` will be installed (via `winget`). After it installs, a **reboot is mandatory** — its service doesn't work until then. The script will tell you.
 
-`.kbak` files are placed in `C:\Temp` (`/mnt/c/Temp` from inside WSL). That's deliberate: a path with no spaces or non-ASCII characters works the same whatever the Windows user name is.
+With `-Mode backup` the finished `.kbak` is placed **next to the script** (change it with `-OutDir <path>`). `C:\Temp` (`/mnt/c/Temp` from inside WSL) is only a staging area on the way: a path with no spaces or non-ASCII characters works the same whatever the Windows user name is. With `-Mode clone` the image stays in `C:\Temp` — the script prints the full path; it is a ready backup of the source, and it is up to you whether to keep it.
 
 On Windows the `clone` mode is orchestrated by the wrapper itself, because WSL can only hold one disk attached at a time: image the source → detach → attach the target → restore.
+
+**One USB port is enough.** The phases are decoupled by the file: the image is written to `C:\Temp` first, so the source is no longer needed — the script will ask you to unplug it and insert the target drive. Two ports work too; just don't mix the drives up when picking the target.
+
+> **⚠️ A clone carries the filesystem UUID as well** — it is identical to the source drive. The router mounts `/opt` by UUID, so **never plug both drives into the router at once**: which one becomes `/opt` is unpredictable. Keep the clone as a backup, not as a second working drive.
 
 > **After a restore, be sure to enable swap on the router** — otherwise XKeen will crash. See ["After a restore XKeen crashes with out of memory"](#after-a-restore-xkeen-crashes-with-out-of-memory).
 
@@ -485,7 +507,8 @@ fatal error: runtime: out of memory
 This is **not image corruption**. It's fixed with one command on the router — option **3) Swap only** in `router-setup.sh`:
 
 ```
-wget -O /tmp/rs.sh https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
+wget -T 15 -t 3 -O /tmp/rs.sh \
+  https://raw.githubusercontent.com/lastik9/keenetic-entware/main/router-setup.sh
 sh /tmp/rs.sh
 ```
 
