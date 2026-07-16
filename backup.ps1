@@ -589,9 +589,22 @@ try {
           $attD = Attach-Disk $dst
           Invoke-RestoreInWsl $attD.Dev $cloneWsl
           Ok "Готово! Флешка склонирована."
-        } finally { if ($attD) { Detach-Disk $dst $attD.UseMount } }
+        }
+        finally {
+          if ($attD) { Detach-Disk $dst $attD.UseMount }
+          # Образ НЕ удаляем никогда. При успехе это готовая страховка - снимок
+          # рабочей системы. При провале он нужен ещё больше: источник уже
+          # отсоединён, цель в непонятном состоянии, и повторить restore из
+          # готового файла дешевле, чем снимать образ заново.
+          # Путь печатаем ПО-ВИНДОВОМУ: сообщение читает человек в PowerShell,
+          # ему этот путь вставлять в проводник (backup-linux.sh выше показал
+          # /mnt/c/Temp/... - это тот же файл, просто глазами WSL).
+          Write-Host ""
+          Ok "Образ клона сохранён: $cloneWin"
+          Info "Повторить разворот из него:  .\backup.ps1 -Mode restore -InFile $cloneWin"
+          Info "Файл можно удалить вручную, если он больше не нужен."
+        }
       }
-      Remove-Item -LiteralPath $cloneWin -Force -ErrorAction SilentlyContinue
     }
   }
 }
