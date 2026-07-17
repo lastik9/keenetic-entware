@@ -20,6 +20,12 @@
 
 *.sh        text eol=lf
 *.ps1       text eol=lf
+# .cmd - ЕДИНСТВЕННОЕ исключение из LF выше. Не "чинить".
+# cmd.exe на LF спотыкается на goto/метках и многострочных блоках;
+# наши обёртки простые и, скорее всего, пережили бы LF, но проверять
+# это на чужой машине друга - не та цена. В репо всё равно LF,
+# CRLF появляется только в рабочем дереве при checkout.
+*.cmd       text eol=crlf
 *.md        text eol=lf
 S51dropbear text eol=lf
 .gitignore  text eol=lf
