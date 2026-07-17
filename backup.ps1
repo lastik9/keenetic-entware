@@ -282,7 +282,7 @@ function Choose-UsbDisk([bool]$forWrite, [string]$title) {
     $c = Read-Host "Введи 'YES' (заглавными) для подтверждения"
     if ($c -cne "YES") { Die "Не подтверждено. Отмена." }
   } else {
-    Info "Источник: Disk $($disk.Number) ($($disk.FriendlyName), $gb GB) - только чтение."
+    Info "Источник: Disk $($disk.Number) ($($disk.FriendlyName), $gb GB) - не будет стёрт."
     $c = Read-Host "Это нужная флешка? (y/n)"
     if ($c -notmatch '^[yY]') { Die "Отмена." }
   }
