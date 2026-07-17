@@ -373,9 +373,28 @@ function Get-UsbipdListLines {
   try { return (& usbipd.exe list 2>&1 | ForEach-Object { "$_" }) }
   finally { $ErrorActionPreference = $old }
 }
+# Attach СБИВАЕТ устройство с шины. Замер 17.07.2026, Win10, живой WSL:
+#   до attach          -> busid есть в 'usbipd list'
+#   сразу после отказа -> строки busid НЕТ вообще (уходит в Persisted)
+#   через ~5 c         -> вернулось
+# Bind этого НЕ делает (проверено: 15 c подряд устройство на месте).
+# Поэтому перед КАЖДОЙ попыткой ждём физического возврата устройства на шину,
+# иначе следующая попытка бьёт в пустоту и сбивает его снова — так скрипт
+# дрался сам с собой, а это выглядело «флаком железа».
+# Слепой Start-Sleep между попытками НЕ помогает (замер: пауза 3 c после
+# возврата дала 5,5,9 и 2 отказа из 5 — не лучше нуля). Не возвращать.
+function Wait-UsbDevicePresent($busid, [int]$timeoutSec = 20) {
+  $pat = "^" + [regex]::Escape($busid) + "\s"
+  $t = 0.0
+  while ($t -lt $timeoutSec) {
+    if (Get-UsbipdListLines | Where-Object { $_ -match $pat }) { return $true }
+    Start-Sleep -Milliseconds 500
+    $t += 0.5
+  }
+  return $false
+}
 function Attach-Usbipd($disk) {
   Ensure-Usbipd
-
   # 1) пробуем определить BUSID автоматически по VID:PID выбранной флешки
   $busid = $null
   $want = Get-DiskUsbId $disk
@@ -413,9 +432,24 @@ function Attach-Usbipd($disk) {
   # ('error|failed|state') не годится: 'state' встречается в безобидном выводе,
   # а настоящая причина отказа при этом выбрасывалась и диагностика шла вслепую.
   Info "Прицепляю флешку к WSL (attach с повторами)..."
+  # Лимит 40. Обоснование — замер, а не теория. Win10, живой WSL, ожидание
+  # возврата устройства перед каждой попыткой; 40 циклов, 0 отказов:
+  #   SanDisk 0781:5595, порт 11-3: 4,2,2,1,1,1,8,7,4,1   -> макс 8
+  #   SanDisk 0781:5595, порт 11-4: 1,9,2,4,4,3,6,10,4,3  -> макс 10
+  #   флешка 1f75:0918,  порт 11-4: 4,4,2,9,5,8,5,6,7,15  -> макс 15
+  # Ни флешка, ни порт роли не играют — распределение одно и то же.
+  # ХВОСТ ТЯЖЁЛЫЙ: каждая новая выборка сдвигала максимум (8 -> 10 -> 15),
+  # настоящий край НЕ ИЗВЕСТЕН. Поэтому запас щедрый, а не "в два раза от
+  # наблюдённого". Цена лимита ~0: слепых пауз нет, попытка ~1-2 c, лимит
+  # тратится только в плохом случае. При лимите 5 падала треть прогонов.
+  # НЕ ЗАНИЖАТЬ, даже если "всегда проходит с первой".
+  $maxAttempts = 40
   $attached = $false
-  for ($a = 1; $a -le 5; $a++) {
+  for ($a = 1; $a -le $maxAttempts; $a++) {
     Assert-WslKeepAlive     # без запущенного дистрибутива attach бессмыслен
+    if (-not (Wait-UsbDevicePresent $busid)) {
+      Warn "Устройство $busid не вернулось на шину за 20 c - пробую attach вслепую."
+    }
     $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $out = (& usbipd.exe attach --wsl --busid $busid 2>&1 | ForEach-Object { "$_" }) -join "`n"
     $rc  = $LASTEXITCODE
@@ -424,7 +458,7 @@ function Attach-Usbipd($disk) {
     if ($out) { Write-Host $out }   # usbipd называет причину внятно — не выбрасывать
     if ($rc -eq 0) { $attached = $true; Ok "attach прошёл с попытки $a (RC=0)."; break }
 
-    Warn "Попытка $a не удалась (RC=$rc)."
+    Warn "Попытка $a из $maxAttempts не удалась (RC=$rc)."
     # 'already attached' — НЕ успех: привязка может висеть от умершего экземпляра
     # WSL, а устройства в живом при этом нет. Отцепляем и пробуем заново.
     if ($out -match 'already attached') {
@@ -435,7 +469,7 @@ function Attach-Usbipd($disk) {
       Start-Sleep -Seconds 2
       continue
     }
-    if ($a -lt 5) { Info "Повтор через 3 c..."; Start-Sleep -Seconds 3 }
+    # Слепой паузы здесь нет намеренно: ждём возврата устройства (в начале цикла).
   }
   if (-not $attached) {
     Warn "usbipd об успехе не отчитался - проверяю, появилось ли устройство фактически."
