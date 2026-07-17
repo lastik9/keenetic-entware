@@ -503,11 +503,18 @@ function Detach-Usbipd {
   # после каждого прогона она оставалась Stopped при StartType=Automatic.
   # Прицельного Stop-Process по $script:UsbipProc выше достаточно. Не возвращать.
   if ($script:UsbipBusid) {
-    # тихо: устройство к этому моменту может быть уже отвязано auto-attach'ем
     $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
-      & usbipd.exe detach --busid $script:UsbipBusid 2>&1 | Out-Null
-      & usbipd.exe unbind --busid $script:UsbipBusid 2>&1 | Out-Null
+      & usbipd.exe detach --busid $script:UsbipBusid 2>&1 | Write-Host
+      # После detach устройство физически уходит с шины и отсутствует в 'usbipd list'
+      # ~6,0 c (замер 18.07.2026, ASMedia). unbind в этом окне честно печатает
+      # 'no device' и НЕ отвязывает — устройство остаётся Shared до следующего прогона.
+      # Слепой Start-Sleep 3 провалился 10/10: лечит не пауза, а ожидание ФАКТА.
+      # Симметрично ожиданию перед attach выше. Таймаут 20 c при измеренных 6 — тройной запас.
+      if (-not (Wait-UsbDevicePresent $script:UsbipBusid)) {
+        Warn "Устройство $($script:UsbipBusid) не вернулось на шину за 20 c - unbind, скорее всего, не сработает."
+      }
+      & usbipd.exe unbind --busid $script:UsbipBusid 2>&1 | Write-Host
     } finally { $ErrorActionPreference = $old }
   }
 }
