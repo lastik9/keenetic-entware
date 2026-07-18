@@ -35,7 +35,12 @@ start()
 
 stop()
 {
-        kill `cat $PIDFILE`
+        # kill только если pid реально принадлежит dropbear: иначе restart на
+        # протухшем pid-файле убил бы чужой процесс (tsmb-server), занявший PID.
+        if dropbear_status
+        then
+                kill `cat $PIDFILE`
+        fi
         rm -f "$PIDFILE"
 }
 case "$1" in
