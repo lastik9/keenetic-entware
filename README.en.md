@@ -594,7 +594,7 @@ e2fsck -f "$DEV" && resize2fs "$DEV"
   ```
   A healthy result is 5 passes with no `Fix?` or `illegal block` lines, ending with `OPKG: NNNN/... files`.
 - The macOS `mke2fs`/`debugfs`/`e2image` binaries are built from e2fsprogs as **universal** (arm64 + x86_64), statically linked internally, so they depend only on `/usr/lib/libSystem`. See [BUILD.md](BUILD.md) to rebuild them yourself. On Linux and Windows nothing needs downloading.
-- `e2fsck` and `resize2fs` are **not yet** in the downloaded macOS bundle: if Homebrew's `e2fsprogs` is installed, the script uses them from there. Without Homebrew, the FS check and shrink are skipped — backup and restore still work, just slower and without a pre-check. Adding both tools to the bundle is planned.
+- `e2fsck` and `resize2fs` are included in the downloaded macOS bundle as well (together with `mke2fs`, `debugfs` and `e2image`), so the FS pre-check and shrink work on a bare Mac without Homebrew. If Homebrew's `e2fsprogs` is present the script prefers it; otherwise it falls back to the bundled tools. Only an older bundle that predates these binaries skips the check and shrink.
 
 ## Building the binaries yourself
 
