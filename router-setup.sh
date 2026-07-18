@@ -125,6 +125,9 @@ fix_dropbear() {
   fi
   cat > "$DB_INIT" << 'DBEOF'
 #!/bin/sh
+# СИНХРОН: этот init-скрипт существует в ДВУХ копиях: standalone S51dropbear
+# и heredoc DBEOF внутри router-setup.sh. Правишь одну - правь обе.
+# Место сверки: kill в stop() под охраной dropbear_status.
 
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
 
