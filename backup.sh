@@ -134,7 +134,7 @@ ensure_tools() {
 fsck_precheck() {
   local DISK="$1"
   local part="${DISK}s2"
-  local rc=0 ans
+  local rc=0 ans fy_rc=0
   if [[ -z "$E2FSCK" ]]; then
     warn "Пропускаю проверку ФС (нет e2fsck). Если e2image упадёт — проверь ФС вручную."
     return 0
@@ -162,7 +162,19 @@ fsck_precheck() {
     f|F)
       info "Чиню ФС (e2fsck -fy)..."
       run "diskutil unmountDisk force $DISK"
-      sudo "$E2FSCK" -fy "$part" || warn "e2fsck -fy завершился с ненулевым кодом."
+      # Коды e2fsck — битовая маска, а не «0 хорошо / не 0 плохо»:
+      #   0 — ошибок не было
+      #   1 — ошибки найдены и ИСПРАВЛЕНЫ (штатный итог починки, не тревога)
+      #   2 — исправлены, просит перезагрузку (для съёмной флешки неважно)
+      #   4 — часть ошибок ОСТАЛАСЬ неисправленной
+      #   8 — операционная ошибка, 16 — синтаксис, 32 — прервано пользователем
+      fy_rc=0
+      sudo "$E2FSCK" -fy "$part" || fy_rc=$?
+      case "$fy_rc" in
+        0)   ok   "e2fsck: ошибок не найдено." ;;
+        1|2) ok   "e2fsck: ошибки найдены и исправлены (код $fy_rc — это норма после починки)." ;;
+        *)   warn "e2fsck вернул код $fy_rc — часть ошибок могла остаться (4 — не исправлено, 8 — сбой, 16 — синтаксис, 32 — прервано)." ;;
+      esac
       info "Перепроверяю..."
       run "diskutil unmountDisk force $DISK"
       if sudo "$E2FSCK" -fn "$part" >/dev/null 2>&1; then
