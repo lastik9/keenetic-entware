@@ -243,7 +243,7 @@ run "sudo dd if=/dev/zero of=$SWAP_RAW bs=1m count=8 2>/dev/null"
 
 info "Форматирую $EXT4_SLICE в ext4 (метка $EXT4_LABEL)..."
 run "sudo $MKE2FS -F -t ext4 -L $EXT4_LABEL -O ^64bit,^metadata_csum $EXT4_RAW"
-ok "ext4 создан."
+[[ "$DRY_RUN" == "1" ]] || ok "ext4 создан."
 
 # ----------------------------------------------------------------------------
 # 7. install/<arch>-installer.tar.gz через debugfs (без монтирования)
