@@ -73,6 +73,10 @@ The script will:
 DRY_RUN=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare.sh)
 ```
 
+A dry run **does not need an internet connection**. With no network the script warns that it could not download the binaries or the installer and **carries on** — so you can still rehearse picking the drive and the confirmations. Skipped steps show up as yellow warnings naming what could not be fetched.
+
+When the network is there, a dry run does check the URL and the checksum for real. **A checksum mismatch is always fatal** — that is a finding, not a network hiccup. In a real run (without `DRY_RUN`) any network failure still stops everything before the drive is touched.
+
 **Force the "bare Mac" path** (ignore Homebrew and always download the binaries):
 
 ```

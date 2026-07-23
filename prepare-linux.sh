@@ -49,6 +49,16 @@ warn()  { printf "%s[!]%s %s\n" "$c_yel" "$c_rst" "$*"; }
 err()   { printf "%s[x]%s %s\n" "$c_red" "$c_rst" "$*" >&2; }
 die()   { err "$*"; exit 1; }
 
+# Сетевой сбой: в боевом прогоне фатален, в холостом — только предупреждение.
+# Смысл холостого прогона — отрепетировать выбор диска и подтверждения, а не
+# проверить связь; без интернета он должен доходить до конца, а не падать на
+# первом же curl/apt. Когда сеть есть, URL проверяется как обычно.
+net_fail() {
+  [[ "$DRY_RUN" == "1" ]] || die "$*"
+  warn "$*"
+  warn "(dry-run) продолжаю без сети — на диск всё равно ничего не пишется."
+}
+
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
     printf "   %s(dry-run)%s %s\n" "$c_yel" "$c_rst" "$*"
@@ -66,7 +76,8 @@ usage() {
   С аргументом  — подготовить указанное устройство (с подтверждением).
 
 Переменные окружения:
-  DRY_RUN=1     — ничего не писать на диск (скачивания выполняются).
+  DRY_RUN=1     — ничего не писать на диск (скачивания выполняются, но их
+                  сбой не фатален: без сети прогон идёт до конца).
   ASSUME_YES=1  — не спрашивать подтверждение устройства (для автоматизации).
 USAGE
 }
@@ -124,17 +135,25 @@ ensure_deps() {
 
   if command -v apt-get >/dev/null 2>&1; then
     info "Устанавливаю зависимости: ${uniq[*]}"
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq || die "apt-get update не прошёл (нет интернета в WSL/Linux?)."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "${uniq[@]}" \
-      || die "Не удалось установить: ${uniq[*]}"
+    if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq; then
+      net_fail "apt-get update не прошёл (нет интернета в WSL/Linux?)."
+      return 0
+    fi
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "${uniq[@]}"; then
+      net_fail "Не удалось установить: ${uniq[*]}"
+      return 0
+    fi
   else
+    # Отсутствие apt — не сетевая беда, а неподходящая среда: фатально всегда.
     die "Не хватает: ${uniq[*]}. Установи их вручную (в контролируемой среде ожидался apt)."
   fi
 }
 ensure_deps
-ok "mke2fs:  $(command -v mke2fs)"
-ok "debugfs: $(command -v debugfs)"
-ok "sfdisk:  $(command -v sfdisk)"
+# В холостом прогоне без сети пакетов может не быть — тогда путь пуст, и это
+# не повод падать: ниже все команды записи всё равно только печатаются.
+ok "mke2fs:  $(command -v mke2fs || echo '(не установлен — dry-run без сети)')"
+ok "debugfs: $(command -v debugfs || echo '(не установлен — dry-run без сети)')"
+ok "sfdisk:  $(command -v sfdisk || echo '(не установлен — dry-run без сети)')"
 
 # ----------------------------------------------------------------------------
 # 2. Хелперы устройства
@@ -308,10 +327,12 @@ ok "Архитектура: $ARCH"
 # 5. Скачиваем installer заранее (до разметки — чтобы не стирать зря)
 # ----------------------------------------------------------------------------
 info "Скачиваю $INSTALLER_NAME ..."
-curl -fL --retry 3 -o "$WORKDIR/$INSTALLER_NAME" "$INSTALLER_URL" \
-  || die "Не удалось скачать installer. Проверь URL/интернет."
-[[ -s "$WORKDIR/$INSTALLER_NAME" ]] || die "Скачанный installer пустой."
-ok "Installer готов ($(du -h "$WORKDIR/$INSTALLER_NAME" | cut -f1))"
+if curl -fL --retry 3 -o "$WORKDIR/$INSTALLER_NAME" "$INSTALLER_URL"; then
+  [[ -s "$WORKDIR/$INSTALLER_NAME" ]] || die "Скачанный installer пустой."
+  ok "Installer готов ($(du -h "$WORKDIR/$INSTALLER_NAME" | cut -f1))"
+else
+  net_fail "Не удалось скачать installer. Проверь URL/интернет."
+fi
 
 # ----------------------------------------------------------------------------
 # 6. Разметка: MBR, swap (0x82) первым, ext4 (0x83) — остаток. sfdisk ставит и размеры, и типы.

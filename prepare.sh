@@ -14,7 +14,10 @@
 #   IGNORE_BREW=1 DRY_RUN=1 bash prepare.sh  # путь «голого мака» (brew будто нет)
 #
 # DRY_RUN=1 защищает ДИСК от записи (разметка/формат/eject не выполняются).
-# Скачивание бинарников/installer'а при этом происходит — это безопасно.
+# Скачивание бинарников/installer'а при этом происходит — это безопасно, а заодно
+# проверяет URL и контрольную сумму. Но если сети нет, холостой прогон НЕ падает:
+# он предупреждает и идёт дальше, чтобы можно было отрепетировать выбор диска
+# и подтверждения офлайн. Несовпавшая сумма фатальна всегда — это находка.
 #
 set -euo pipefail
 
@@ -54,6 +57,16 @@ warn()  { printf "%s[!]%s %s\n" "$c_yel" "$c_rst" "$*"; }
 err()   { printf "%s[x]%s %s\n" "$c_red" "$c_rst" "$*" >&2; }
 die()   { err "$*"; exit 1; }
 
+# Сетевой сбой: в боевом прогоне фатален, в холостом — только предупреждение.
+# Смысл холостого прогона — отрепетировать выбор диска и подтверждения, а не
+# проверить связь; без интернета он должен доходить до конца, а не падать на
+# первом же curl. Когда сеть есть, URL и контрольная сумма проверяются как обычно.
+net_fail() {
+  [[ "$DRY_RUN" == "1" ]] || die "$*"
+  warn "$*"
+  warn "(dry-run) продолжаю без сети — на диск всё равно ничего не пишется."
+}
+
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
     printf "   %s(dry-run)%s %s\n" "$c_yel" "$c_rst" "$*"
@@ -90,8 +103,12 @@ fetch_bundle() {
   info "Скачиваю universal-бинарники e2fsprogs..."
   mkdir -p "$BUNDLE_DIR"
   # curl-загрузка НЕ ставит флаг карантина (в отличие от скачивания браузером)
-  curl -fL --retry 3 -o "$WORKDIR/$E2FS_BUNDLE_NAME" "$E2FS_BUNDLE_URL" \
-    || die "Не удалось скачать бинарники ($E2FS_BUNDLE_URL). Проверь тег релиза/интернет."
+  if ! curl -fL --retry 3 -o "$WORKDIR/$E2FS_BUNDLE_NAME" "$E2FS_BUNDLE_URL"; then
+    net_fail "Не удалось скачать бинарники ($E2FS_BUNDLE_URL). Проверь тег релиза/интернет."
+    return 1
+  fi
+  # Пустой архив и несовпавшая сумма — не сетевая беда, а находка: фатально всегда,
+  # иначе холостой прогон промолчит ровно о том, ради чего его и запускают.
   [[ -s "$WORKDIR/$E2FS_BUNDLE_NAME" ]] || die "Скачанный архив пустой."
 
   if [[ -n "$E2FS_BUNDLE_SHA256" ]]; then
@@ -125,10 +142,14 @@ ensure_e2fsprogs() {
     return 0
   fi
   # Не нашли локально — качаем bundle
-  fetch_bundle
+  fetch_bundle || true
   MKE2FS="$(find_tool mke2fs || true)"
   DEBUGFS="$(find_tool debugfs || true)"
-  [[ -n "$MKE2FS" && -n "$DEBUGFS" ]] || die "Не удалось подготовить e2fsprogs."
+  if [[ -z "$MKE2FS" || -z "$DEBUGFS" ]]; then
+    [[ "$DRY_RUN" == "1" ]] || die "Не удалось подготовить e2fsprogs."
+    MKE2FS="mke2fs"; DEBUGFS="debugfs"
+    warn "(dry-run) бинарники не скачаны — ниже подставлены имена без пути."
+  fi
 }
 
 ensure_e2fsprogs
@@ -201,10 +222,12 @@ ok "Архитектура: $ARCH"
 # 3. Скачиваем installer заранее (до разметки — чтобы не стирать зря)
 # ----------------------------------------------------------------------------
 info "Скачиваю $INSTALLER_NAME ..."
-curl -fL --retry 3 -o "$WORKDIR/$INSTALLER_NAME" "$INSTALLER_URL" \
-  || die "Не удалось скачать installer. Проверь URL/интернет."
-[[ -s "$WORKDIR/$INSTALLER_NAME" ]] || die "Скачанный installer пустой."
-ok "Installer готов ($(du -h "$WORKDIR/$INSTALLER_NAME" | cut -f1))"
+if curl -fL --retry 3 -o "$WORKDIR/$INSTALLER_NAME" "$INSTALLER_URL"; then
+  [[ -s "$WORKDIR/$INSTALLER_NAME" ]] || die "Скачанный installer пустой."
+  ok "Installer готов ($(du -h "$WORKDIR/$INSTALLER_NAME" | cut -f1))"
+else
+  net_fail "Не удалось скачать installer. Проверь URL/интернет."
+fi
 
 # ----------------------------------------------------------------------------
 # 4. Права администратора (нужны для прямого доступа к устройству)
