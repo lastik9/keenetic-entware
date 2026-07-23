@@ -64,7 +64,7 @@ die()   { err "$*"; exit 1; }
 net_fail() {
   [[ "$DRY_RUN" == "1" ]] || die "$*"
   warn "$*"
-  warn "(dry-run) продолжаю без сети — на диск всё равно ничего не пишется."
+  warn "(dry-run) пропускаю этот шаг и иду дальше — на диск всё равно ничего не пишется."
 }
 
 run() {
@@ -137,8 +137,10 @@ MKE2FS=""; DEBUGFS=""
 ensure_e2fsprogs() {
   MKE2FS="$(find_tool mke2fs || true)"
   DEBUGFS="$(find_tool debugfs || true)"
+  # Сообщать о выбранной ветке надо ДО поиска: при IGNORE_BREW=1 find_tool
+  # заведомо ничего не найдёт, и внутри if эта строка не печаталась никогда.
+  [[ "$IGNORE_BREW" == "1" ]] && info "IGNORE_BREW=1 — Homebrew игнорируется, качаю бинарники."
   if [[ -n "$MKE2FS" && -n "$DEBUGFS" ]]; then
-    [[ "$IGNORE_BREW" == "1" ]] && info "IGNORE_BREW=1 — Homebrew игнорируется."
     return 0
   fi
   # Не нашли локально — качаем bundle
