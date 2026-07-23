@@ -79,6 +79,24 @@ DRY_RUN=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-e
 IGNORE_BREW=1 bash <(curl -fsSL https://raw.githubusercontent.com/lastik9/keenetic-entware/main/prepare.sh)
 ```
 
+#### `fdisk` noise on Apple Silicon is not an error
+
+While the partition types are being set, `fdisk` prints:
+
+```
+fdisk: could not open MBR file /usr/standalone/i386/boot0
+```
+
+It is looking for an Intel-era Mac boot block that does not exist on Apple Silicon. `setpid` (changing a partition type) has no use for that file. `Writing MBR at offset 0.` follows right after, and the script's own self-check confirms types 82/83. **No reason to panic.**
+
+The same stage also normally prints:
+
+```
+mke2fs: /dev/... contains a vfat file system labelled 'OPKG'
+```
+
+That is expected — the partition has just been created as FAT and is immediately reformatted to ext4; that is exactly why the script passes `-F`.
+
 ### Linux
 
 Partitioning needs root, so it's easiest to download the script first and then run it with `sudo`:
@@ -279,6 +297,27 @@ The helper shows a **menu** of four scenarios:
 4. **SSH-222 fix only** — fixes the stale dropbear pid file (see the section above). Handy after `opkg upgrade dropbear`.
 
 After setup, reboot the router (`reboot`). Swap comes up automatically; verify with `cat /proc/swaps`.
+
+#### "No partition labelled SWAP" on a fresh drive is normal
+
+On its first run the helper will almost certainly warn that it found no partition labelled `SWAP` and is falling back to the partition table.
+
+That is by design. `prepare.sh` creates the swap partition as FAT32 named `SWAP`, but then **zeroes out the first 8 MB** so the router won't mistake the partition for VFAT. The volume label dies together with the FAT signature, so on a fresh drive `blkid` sees no `LABEL="SWAP"`.
+
+The helper then locates the partition by its 0x82 type and runs `mkswap -L SWAP` — and the label appears. From the second run on, the lookup by label works. Nothing needs fixing.
+
+#### Hot-swapping the drive: reboot the router
+
+If the drive was pulled and plugged back in **without a reboot**, it may come up under a different letter (`sda` → `sdb`). The `S02swap` autostart survives that — it looks the partition up by label, not by device name — but `/proc/swaps` keeps an entry for the old device:
+
+```
+/dev/sda1\040(deleted)   partition   999996   80   -1
+/dev/sdb1                partition   999996    0   -2
+```
+
+The top line is a phantom: the device is gone, yet the kernel still counts swap on it — **and at a higher priority** (`-1` against `-2`). While there is enough RAM this is harmless, but the moment swap is actually needed the kernel will reach for a device that no longer exists.
+
+Cured by a reboot (`reboot`). Afterwards `/proc/swaps` should hold **one** line, with no `(deleted)` marker.
 
 ### Geodata for XKeen/Mihomo (if the databases won't download)
 
@@ -540,6 +579,22 @@ Warning: skipping journal recovery because doing a read-only filesystem check.
 ```
 
 There are uncommitted transactions left in the journal. This is normal, not damage. A fix (`-fy`) replays the journal, and **the file count may change slightly** — e.g. a deferred deletion of temp files gets applied. That's expected.
+
+**About the exit code.** For `e2fsck` the exit code is a **bit mask**, not "zero is good, anything else is bad":
+
+| Code | Meaning |
+|---|---|
+| `0` | no errors found |
+| `1` | errors found and **corrected** — the normal outcome of a repair |
+| `2` | corrected, asks for a reboot (irrelevant for a removable drive) |
+| `4` | some errors were **left** uncorrected |
+| `8` / `16` / `32` | operational error / syntax / cancelled by the user |
+
+So after a successful repair the script prints a **green** line stating that errors were found and corrected, quoting the code (`1` is the norm here). A yellow warning about the exit code shows up only at `4` and above — that is when there is something to worry about. Either way the decisive line is the next one: the script re-checks the FS and should report it clean. If it did, the image is taken from a healthy filesystem.
+
+> Before the K-2 fix the script warned on **any** non-zero code, so a yellow line flashed by after every successful repair. If you still see that, you are on an older version of the script — and there is still nothing to worry about.
+
+On top of that, once the journal has been replayed **the number of used blocks usually grows**: data that was sitting in the journal goes back into place. That is the journal doing its job, not a loss.
 
 ### Where to get the full path to a `.kbak`
 
