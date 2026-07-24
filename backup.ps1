@@ -12,8 +12,12 @@
  macOS/Linux format, so images are interchangeable across all three platforms.
 
  Disk passthrough path (auto-detected, same as prepare.ps1):
-   - Windows 11 : native  wsl --mount --bare \\.\PHYSICALDRIVE<N>
-   - Windows 10 : usbipd-win + attach (auto BUSID by VID:PID, single attach + retries)
+   - USB flash drives (removable), ANY Windows : usbipd-win + attach
+     (auto BUSID by VID:PID, single attach + retries)
+     wsl --mount --bare does NOT work with removable media on any Windows -
+     it fails with Wsl/Service/AttachDisk/MountDisk/HCS/0x8007000f
+     (ERROR_INVALID_DRIVE). Verified on live Win11 build 26200.
+   - Non-removable disks, Windows 11 : native wsl --mount --bare \\.\PHYSICALDRIVE<N>
 
  Modes:
    -Mode backup   snap the flash to a .kbak file (saved on Windows)
@@ -95,8 +99,10 @@ Write-Host ""
 # ---------------------------------------------------------------- Windows version
 $win = [System.Environment]::OSVersion.Version
 $IsWin11 = ($win.Build -ge 22000)
-if ($IsWin11) { Info "Windows 11 (build $($win.Build)) - путь: wsl --mount" }
-else          { Info "Windows 10 (build $($win.Build)) - путь: usbipd" }
+# Для СЪЁМНЫХ носителей путь всегда usbipd (wsl --mount их не принимает ни на
+# Win10, ни на Win11) - поэтому здесь не обещаем wsl --mount заранее.
+$winName = if ($IsWin11) { "11" } else { "10" }
+Info "Windows $winName (build $($win.Build)) - флешку пробрасываю через usbipd"
 
 # env-строки для DRY_RUN/NO_SHRINK (подставляются в bash-команду)
 $DR = if ($DryRun)   { "1" } else { "0" }
