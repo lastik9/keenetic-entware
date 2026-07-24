@@ -319,15 +319,29 @@ fsck_precheck() {
   return 0
 }
 
+# Проиграть журнал ФС ПЕРЕД снятием образа. Сам e2image журнал не проигрывает,
+# а e2fsck -fn его не проигрывает и о нём не сообщает (N-1, N-2) — без этого шага
+# непроигранный журнал молча уезжает в .kbak (N-3). К ужатию отношения не имеет:
+# нужен и при NO_SHRINK=1, и когда resize2fs вовсе нет.
+replay_journal() {
+  local part="$1"
+  [[ "$DRY_RUN" == "1" ]] && { warn "(dry-run) e2fsck -fy $part (проигрывание журнала)"; return 0; }
+  [[ -z "$E2FSCK" ]] && { warn "Нет e2fsck — журнал не проигран, образ может содержать непроигранный журнал."; return 0; }
+  # FS_IS_CLEAN != 1 — пользователь ответил [c] в fsck_precheck. Его выбор не переигрываем.
+  [[ "$FS_IS_CLEAN" != "1" ]] && { warn "ФС не подтверждена как чистая — журнал не трогаю (твой выбор)."; return 0; }
+  info "Проигрываю журнал ФС перед снятием образа (e2fsck -fy)..."
+  "$E2FSCK" -fy "$part" >/dev/null 2>&1 || true
+  return 0
+}
+
 # Ужать ФС до реального объёма ПЕРЕД снятием образа (restore тогда пишет мегабайты).
+# Журнал к этому моменту уже проигран в replay_journal — resize2fs -P этого требует.
 shrink_fs() {
   local part="$1" min_blocks target out blocks ksz
   [[ "$NO_SHRINK" == "1" ]] && { info "Ужатие ФС отключено (NO_SHRINK=1)."; return 1; }
   [[ "$DRY_RUN" == "1" ]]  && { warn "(dry-run) resize2fs -P + ужатие ФС"; return 1; }
   [[ -z "$RESIZE2FS" ]] && { warn "Нет resize2fs — ужатие пропускаю (restore медленнее, но корректно)."; return 1; }
   [[ "$FS_IS_CLEAN" != "1" ]] && { warn "ФС не подтверждена как чистая — ужатие пропускаю."; return 1; }
-  # resize2fs -P строже e2fsck -fn: требует проигранный журнал -> проигрываем один раз.
-  [[ -n "$E2FSCK" ]] && "$E2FSCK" -fy "$part" >/dev/null 2>&1 || true
   min_blocks="$("$RESIZE2FS" -P "$part" 2>/dev/null \
                 | sed -n 's/.*minimum size of the filesystem: *\([0-9][0-9]*\).*/\1/p' | head -1)"
   if [[ ! "$min_blocks" =~ ^[0-9]+$ ]] || [[ "$min_blocks" -le 0 ]]; then
@@ -396,6 +410,9 @@ do_backup() {
   # 0. Предчек ФС ДО снятия образа (защита от битого .kbak)
   fsck_precheck "$P2"
   run "unmount_all $DISK"
+
+  # 0.4. Проиграть журнал (нужно даже при NO_SHRINK=1 — иначе он уедет в образ)
+  replay_journal "$P2"
 
   # 0.5. Ужать ФС до реального объёма
   shrink_fs "$P2" || true
