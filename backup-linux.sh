@@ -129,7 +129,7 @@ ensure_deps() {
   fi
 }
 
-E2IMAGE=""; E2FSCK=""; RESIZE2FS=""
+E2IMAGE=""; E2FSCK=""; RESIZE2FS=""; DUMPE2FS=""
 ensure_tools() {
   [[ -n "$E2IMAGE" ]] && return 0
   ensure_deps
@@ -140,6 +140,10 @@ ensure_tools() {
   RESIZE2FS="$(command -v resize2fs || true)"
   [[ -n "$E2FSCK"    ]] && ok "e2fsck:    $E2FSCK"    || warn "e2fsck не найден — проверка ФС будет пропущена."
   [[ -n "$RESIZE2FS" ]] && ok "resize2fs: $RESIZE2FS" || warn "resize2fs не найден — ужатие/растяжка отключены."
+  # dumpe2fs — только чтобы прочитать флаг needs_recovery (N-2). Без него скрипт
+  # работает как раньше: журнал проигрывается, но сказать о нём нечего.
+  DUMPE2FS="$(command -v dumpe2fs || true)"
+  [[ -n "$DUMPE2FS" ]] || warn "dumpe2fs не найден — о непроигранном журнале сообщить не смогу."
 }
 
 # ----------------------------------------------------------------------------
@@ -282,6 +286,17 @@ pick_backup_file() {
 # ----------------------------------------------------------------------------
 # 4. Предчек / ужатие / растяжка ФС (порт из backup.sh; на Linux — прямо по блок-устройству)
 # ----------------------------------------------------------------------------
+# Стоит ли на ФС флаг needs_recovery — то есть журнал не проигран (флешку выдернули
+# на ходу или сняли без размонтирования). e2fsck -fn такую ФС считает чистой и кода
+# не меняет (N-1), поэтому спрашиваем отдельно. Только чтение, ничего не меняет.
+# Читать ОБЯЗАТЕЛЬНО до e2fsck -fy: после починки флаг снят и спросить уже не о чем.
+fs_needs_recovery() {
+  local part="$1"
+  [[ -n "$DUMPE2FS" ]] || return 1
+  "$DUMPE2FS" -h "$part" 2>/dev/null \
+    | sed -n 's/^Filesystem features: *//p' | grep -qw needs_recovery
+}
+
 fsck_precheck() {
   local part="$1" rc=0 ans fy_rc=0
   if [[ -z "$E2FSCK" ]]; then
@@ -291,7 +306,14 @@ fsck_precheck() {
   info "Проверяю ФС перед снятием образа (e2fsck -fn, только чтение)..."
   if [[ "$DRY_RUN" == "1" ]]; then warn "(dry-run) $E2FSCK -fn $part"; return 0; fi
   "$E2FSCK" -fn "$part" > "$WORKDIR/fsck.log" 2>&1 || rc=$?
-  if [[ "$rc" -eq 0 ]]; then ok "ФС чистая — снимаю образ."; FS_IS_CLEAN=1; return 0; fi
+  if [[ "$rc" -eq 0 ]]; then
+    # Вариант B по N-2: сообщаем, но не спрашиваем. Прогон не прерывается.
+    if fs_needs_recovery "$part"; then
+      warn "Журнал ФС не проигран: флешку выдернули на ходу или сняли без размонтирования."
+      warn "Данные целы, журнал проиграю сам (шаг 0.4). Если это повторяется — снимай флешку через размонтирование."
+    fi
+    ok "ФС чистая — снимаю образ."; FS_IS_CLEAN=1; return 0
+  fi
   echo
   warn "e2fsck вернул код $rc — ФС не в порядке (грязный журнал или ошибки)."
   tail -15 "$WORKDIR/fsck.log" >&2 || true
