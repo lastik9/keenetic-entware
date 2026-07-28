@@ -471,7 +471,11 @@ do_backup() {
     # Обёртка задаёт KBAK_OUT (путь на /mnt/c/...) — перемещаем туда.
     if [[ -n "$KBAK_OUT" ]]; then
       mkdir -p "$(dirname "$KBAK_OUT")" 2>/dev/null || true
-      mv -f "$OUT" "$KBAK_OUT" && OUT="$KBAK_OUT"
+      if mv -f "$OUT" "$KBAK_OUT"; then
+        OUT="$KBAK_OUT"
+      else
+        warn "Не удалось переместить образ в $KBAK_OUT — оставляю по пути $PWD/$OUT (обёртка ожидала его в $KBAK_OUT)."
+      fi
     fi
     # На нативном Linux вернём владение файлом обычному пользователю (после sudo).
     [[ "$OWNER_UID" != "0" ]] && chown "$OWNER_UID:$OWNER_GID" "$OUT" 2>/dev/null || true
