@@ -663,11 +663,15 @@ try {
       try {
         $att = Attach-Disk $disk
         Invoke-RestoreInWsl $att.Dev $staged.Wsl
-        Ok "Готово! Образ развёрнут на флешку."
-        Write-Host ""
-        Write-Host "Дальше - на роутере:" -ForegroundColor Cyan
-        Write-Host "  1. Вставь флешку в Keenetic."
-        Write-Host "  2. Swap активируется на роутере (router-setup.sh: mkswap -L SWAP)."
+        if ($DryRun) {
+          Ok "(dry-run) restore проверен - на флешку ничего не записано."
+        } else {
+          Ok "Готово! Образ развёрнут на флешку."
+          Write-Host ""
+          Write-Host "Дальше - на роутере:" -ForegroundColor Cyan
+          Write-Host "  1. Вставь флешку в Keenetic."
+          Write-Host "  2. Swap активируется на роутере (router-setup.sh: mkswap -L SWAP)."
+        }
       }
       finally {
         if ($att) { Detach-Disk $disk $att.UseMount }

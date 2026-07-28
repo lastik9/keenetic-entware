@@ -481,7 +481,7 @@ do_backup() {
   if [[ "$IS_WSL" != "1" ]]; then
     if [[ "$finish" == "eject" ]]; then
       run "udisksctl power-off -b $DISK 2>/dev/null || true"
-      info "Исходную флешку можно вынимать."
+      [[ "$DRY_RUN" == "1" ]] || info "Исходную флешку можно вынимать."
     fi
   fi
   echo
@@ -580,7 +580,7 @@ SFDISK
   # 3. Развернуть ext4 ПРЯМО в раздел (Linux e2image это умеет).
   info "Разворачиваю ext4 из образа в $P2..."
   run "$E2IMAGE -ra $STAGE/opkg.e2img $P2"
-  ok "ext4 развёрнут на $P2."
+  [[ "$DRY_RUN" == "1" ]] || ok "ext4 развёрнут на $P2."
 
   # 3.5. Растянуть ФС на весь раздел.
   FS_NOT_GROWN=0
@@ -609,14 +609,18 @@ SFDISK
   fi
 
   echo
-  ok "Готово. Флешку можно вставить в роутер."
-  info "Swap активируется на роутере (router-setup.sh сделает mkswap -L SWAP)."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    ok "(dry-run) Проверка пройдена — на флешку ничего не записано."
+  else
+    ok "Готово. Флешку можно вставить в роутер."
+    info "Swap активируется на роутере (router-setup.sh сделает mkswap -L SWAP)."
+  fi
   if [[ "$FS_NOT_GROWN" == "1" ]]; then
     echo
     warn "ФС НЕ растянута на весь раздел. Растянуть на роутере:"
     warn "  opkg install e2fsprogs resize2fs"
     warn "  DEV=\$(blkid | grep 'LABEL=\"OPKG\"' | cut -d: -f1); e2fsck -f \$DEV && resize2fs \$DEV"
-  else
+  elif [[ "$DRY_RUN" != "1" ]]; then
     info "ФС уже растянута на весь раздел — ничего доделывать не нужно."
   fi
 }
