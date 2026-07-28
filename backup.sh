@@ -368,7 +368,7 @@ do_backup() {
   # файл-образ ровно под исходную ФС (быстрее), а не под целевой раздел.
   local ext4_part_bytes
   ext4_part_bytes="$(diskutil info "${DISK}s2" 2>/dev/null | awk -F'[()]' '/Disk Size|Partition Size/{print $2; exit}' | awk '{print $1}')"
-  OUT="keenetic-backup-$(date +%Y%m%d-%H%M).kbak"
+  OUT="keenetic-backup-$(date +%Y%m%d-%H%M%S).kbak"
   STAGE="$WORKDIR/stage"; mkdir -p "$STAGE"
   info "Размонтирую диск..."
   run "diskutil unmountDisk force $DISK"

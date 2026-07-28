@@ -615,7 +615,7 @@ try {
       $att = $null
       try {
         $att = Attach-Disk $disk
-        $stamp = Get-Date -Format "yyyyMMdd-HHmm"
+        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
         $name  = "keenetic-backup-$stamp.kbak"
         $wslOut = "/mnt/c/Temp/$name"
         New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null

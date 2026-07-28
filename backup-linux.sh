@@ -429,7 +429,7 @@ do_backup() {
   info "ext4-раздел: $P2"
   ext4_part_bytes="$(disk_size_bytes "$P2")"
 
-  OUT="keenetic-backup-$(date +%Y%m%d-%H%M).kbak"
+  OUT="keenetic-backup-$(date +%Y%m%d-%H%M%S).kbak"
   STAGE="$WORKDIR/stage"; mkdir -p "$STAGE"
 
   info "Размонтирую всё с $DISK..."
