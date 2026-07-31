@@ -52,7 +52,7 @@ backup.ps1      : 245354C30C8BAFDB218EACCC082C4E4D7EEC8100ACB824A15F28F454208719
 **0. Виртуализация в BIOS/UEFI.** Включить `Intel VT-x` / `Intel Virtualization Technology`,
 либо `AMD-V` / `SVM Mode`. Без неё WSL2 не поднимется.
 
-**1. Скачать два файла в одну папку:** `backup.ps1` и `backup-linux.sh`. Держать рядом удобно —
+**1. Скачать два файла в одну папку:** [`backup.ps1`](backup.ps1) и [`backup-linux.sh`](backup-linux.sh) (на странице файла — кнопка **«Download raw file»** справа сверху). Держать рядом удобно —
 тогда обёртка возьмёт локальный `backup-linux.sh` и не будет качать его из сети.
 
 **2. Установить WSL** (если ещё нет) — PowerShell **от администратора**:

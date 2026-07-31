@@ -454,9 +454,9 @@ umount ~/smb-opkg                                       # отключить
 
 | Задача | macOS | Linux (нативный) | Windows 10/11 |
 |---|---|---|---|
-| Подготовка флешки | `prepare.sh` | `prepare-linux.sh` | `prepare.ps1` |
-| Бэкап / restore / клон | `backup.sh` | `backup-linux.sh` | `backup.ps1` |
-| Настройка роутера | `router-setup.sh` — по SSH с любой ОС | | |
+| Подготовка флешки | [`prepare.sh`](prepare.sh) | [`prepare-linux.sh`](prepare-linux.sh) | [`prepare.ps1`](prepare.ps1) |
+| Бэкап / restore / клон | [`backup.sh`](backup.sh) | [`backup-linux.sh`](backup-linux.sh) | [`backup.ps1`](backup.ps1) |
+| Настройка роутера | [`router-setup.sh`](router-setup.sh) — по SSH с любой ОС | | |
 
 Формат `.kbak` **един для всех трёх** — образ, снятый на маке, разворачивается на Windows и наоборот.
 
