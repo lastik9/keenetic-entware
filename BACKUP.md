@@ -19,7 +19,7 @@
 
 ```
 backup-linux.sh : 490F62A9BC8035703AA4F63E0FA141E6F43AF8FDE8FCA904EC6A8E588261D07E
-backup.ps1      : BE5FF569A7E43B6F7B8BB233AFB8C8CC8E16F92B1A00228777B387512AB28845
+backup.ps1      : 245354C30C8BAFDB218EACCC082C4E4D7EEC8100ACB824A15F28F45420871941
 ```
 
 Сверить: `Get-FileHash <файл> -Algorithm SHA256` (Windows) или `sha256sum <файл>` (Linux).
@@ -198,6 +198,19 @@ sudo bash backup-linux.sh clone             # снять и сразу зали�
 **«Не найден wsl.exe»** — WSL не установлен, вернись к шагу 2 установки (Windows).
 
 **Обёртка просит перезагрузку после usbipd** — это обязательно, перезагрузись и запусти снова.
+
+**`tcp connect` / «A firewall appears to be blocking the connection… TCP port 3240»** — фаервол
+режет соединение WSL→хост на порт **3240**: штатное правило usbipd (область `LocalSubnet`) не
+покрывает NAT-подсеть WSL. Флешке ничего не грозит — attach просто не проходит. Добавь правило
+(PowerShell **от администратора**) и повтори:
+
+```powershell
+New-NetFirewallRule -DisplayName "usbipd WSL 3240" -Direction Inbound `
+  -Action Allow -Protocol TCP -LocalPort 3240 -RemoteAddress 172.16.0.0/12 -Profile Any
+```
+
+Если и после этого не проходит — разреши входящий `TCP 3240` в стороннем антивирусе/фаерволе
+(Kaspersky, ESET и т.п.), он игнорирует правила Windows.
 
 **«Флешка не появилась в WSL»** — смотри текст ошибки usbipd в логе выше; если явных ошибок нет,
 передёрни флешку/USB-порт и повтори.

@@ -356,6 +356,86 @@ function Ensure-Usbipd {
   }
 }
 
+# ---- Фаервол: порт 3240 (usbipd) для WSL ---------------------------------------
+# usbipd-win при установке сам заводит правило фаервола, но с областью
+# RemoteAddress=LocalSubnet. На части машин (замер: чистая Win10 build 19045,
+# NAT-подсеть WSL 172.21.48.0/20, 30.07.2026) эта область НЕ покрывает подсеть WSL:
+# соединение WSL->хост:3240 режется, usbipd пишет 'A firewall appears to be blocking
+# the connection' / 'tcp connect', attach падает, и цикл attach впустую жжёт все 40
+# попыток. Правило LocalSubnet при этом включено — оно просто не той области.
+# Поэтому ДО attach проверяем связь по факту (зонд /dev/tcp) и, если закрыто,
+# ПРЕДЛАГАЕМ добавить правило под приватный диапазон WSL. Молча фаервол хоста не
+# трогаем — находим и спрашиваем (та же логика, что с прочими правками чужой машины).
+$script:UsbipFwRuleName = "usbipd WSL 3240 (auto)"
+
+# true = порт 3240 доступен из WSL; false = закрыт; $null = зонд не отработал (не знаем).
+function Test-UsbipPort($ip) {
+  try {
+    $r = (Wsl "timeout 3 bash -c 'echo > /dev/tcp/$ip/3240' >/dev/null 2>&1 && echo OPEN || echo BLOCKED" | Out-String).Trim()
+    if ($r -match 'OPEN')    { return $true }
+    if ($r -match 'BLOCKED') { return $false }
+  } catch { }
+  return $null
+}
+
+function Ensure-UsbipFirewall {
+  # IP хоста, как его видит WSL: в NAT-режиме usbipd цепляется именно к шлюзу по умолчанию.
+  $hostIp = $null
+  try {
+    $route = (Wsl "ip route show default 2>/dev/null" | Out-String)
+    if ($route -match 'via\s+(\d+\.\d+\.\d+\.\d+)') { $hostIp = $matches[1] }
+  } catch { }
+  # нет шлюза (mirrored-режим Win11 использует 127.0.0.1 и другой путь) — не лезем
+  if (-not $hostIp) { return }
+
+  if ((Test-UsbipPort $hostIp) -ne $false) { return }  # OPEN или "не знаю" -> не мешаем
+
+  Write-Host ""
+  Warn "Порт 3240 (usbipd) закрыт из WSL для хоста $hostIp — attach так не пройдёт."
+  Write-Host "    Причина: правило фаервола usbipd (LocalSubnet) не покрывает NAT-подсеть WSL." -ForegroundColor Cyan
+
+  # своё правило уже есть, а порт всё равно закрыт -> дело не в области адреса
+  if (Get-NetFirewallRule -DisplayName $script:UsbipFwRuleName -ErrorAction SilentlyContinue) {
+    Warn "Правило '$($script:UsbipFwRuleName)' уже добавлено, но порт закрыт — похоже, режет сторонний антивирус/фаервол."
+    Write-Host "    Разреши в нём входящий TCP 3240 и запусти backup.ps1 снова." -ForegroundColor Cyan
+    return
+  }
+
+  $ans = Read-Host "Добавить правило фаервола (входящий TCP 3240 для приватной сети WSL)? [Y/n]"
+  if ($ans -match '^[nN]') {
+    Warn "Ок, фаервол не трогаю. attach, скорее всего, не пройдёт — открой порт 3240 вручную."
+    return
+  }
+
+  # Область: приватный диапазон WSL. NAT-подсеть WSL плавает при пересоздании сети,
+  # поэтому берём весь 172.16.0.0/12 (наружу не маршрутизируется) — переживает смену
+  # подсети. Если хост почему-то вне 172.16/12 — точечно /24 вокруг него.
+  $remote = "172.16.0.0/12"
+  if ($hostIp -notmatch '^172\.(1[6-9]|2[0-9]|3[01])\.') { $remote = ($hostIp -replace '\.\d+$', '.0/24') }
+
+  try {
+    New-NetFirewallRule -DisplayName $script:UsbipFwRuleName -Direction Inbound `
+      -Action Allow -Protocol TCP -LocalPort 3240 -RemoteAddress $remote -Profile Any | Out-Null
+    Ok "Правило фаервола добавлено (входящий TCP 3240, $remote)."
+  } catch {
+    Warn "Не смог добавить правило фаервола: $_"
+    Write-Host "    Добавь вручную из админского PowerShell и повтори:" -ForegroundColor Cyan
+    Write-Host "    New-NetFirewallRule -DisplayName '$($script:UsbipFwRuleName)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3240 -RemoteAddress $remote -Profile Any" -ForegroundColor Cyan
+    return
+  }
+
+  # судим по факту, а не по факту создания правила
+  Start-Sleep -Milliseconds 500
+  if ((Test-UsbipPort $hostIp) -eq $true) {
+    Ok "Порт 3240 открылся — attach должен пройти."
+  } else {
+    Warn "Правило добавил, но порт всё ещё закрыт — вероятно, режет сторонний антивирус/фаервол."
+    Write-Host "    Разреши входящий TCP 3240 в нём и запусти backup.ps1 снова." -ForegroundColor Cyan
+    # намеренно НЕ Die: даём циклу attach попробовать (вдруг зонд ошибся); если нет —
+    # штатный отказ 'Флешка не появилась в WSL' ниже отработает как обычно.
+  }
+}
+
 $script:UsbipBusid = $null
 
 function Get-DiskUsbId($disk) {
@@ -396,6 +476,7 @@ function Wait-UsbDevicePresent($busid, [int]$timeoutSec = 20) {
 }
 function Attach-Usbipd($disk) {
   Ensure-Usbipd
+  Ensure-UsbipFirewall   # порт 3240 из WSL: проверить и, если закрыт, предложить открыть — ДО цикла attach
   $busid = $null
   $want = Get-DiskUsbId $disk
   $lines = Get-UsbipdListLines
