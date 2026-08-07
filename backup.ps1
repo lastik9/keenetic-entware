@@ -641,10 +641,29 @@ function Detach-Disk($disk, [bool]$useMount) {
 # ---------------------------------------------------------------- WSL runners
 function Invoke-BackupInWsl([string]$dev, [string]$wslOut) {
   Info "Снимаю образ (backup-linux.sh)..."
-  Write-Host ("-"*70)
-  wsl.exe -d $Distro -u root -- bash -c "cd /root && DRY_RUN=$DR NO_SHRINK=$NS KBAK_OUT='$wslOut' DEV=$dev ASSUME_YES=1 bash backup-linux.sh backup"
-  $rc = $LASTEXITCODE
-  Write-Host ("-"*70)
+  # Код возврата 3 = ФС на флешке грязная (ошибки, не просто непроигранный журнал).
+  # e2fsck -fy можно запускать только с согласия — спрашиваем здесь (в PowerShell, где
+  # read работает) и повторяем снятие с FSCK_FIX=1. Детект-и-спросить в духе фаервол-
+  # фикса: при отказе — прежнее поведение (die), никогда не хуже, флешка не тронута.
+  $fsckFix = 0
+  while ($true) {
+    Write-Host ("-"*70)
+    wsl.exe -d $Distro -u root -- bash -c "cd /root && DRY_RUN=$DR NO_SHRINK=$NS KBAK_OUT='$wslOut' DEV=$dev ASSUME_YES=1 FSCK_FIX=$fsckFix bash backup-linux.sh backup"
+    $rc = $LASTEXITCODE
+    Write-Host ("-"*70)
+    if ($rc -eq 3 -and $fsckFix -eq 0) {
+      Write-Host ""
+      Warn "Файловая система на флешке грязная (ошибки, не только непроигранный журнал)."
+      Warn "Снимать образ с битой ФС опасно. Починка e2fsck -fy ИЗМЕНИТ ФС прямо на этой флешке-источнике."
+      $ans = Read-Host "Починить ФС и повторить снятие образа? [Y/n]"
+      if ($ans -match '^[nN]') {
+        Die "Отказ от починки. Образ не снят, флешка не тронута. Размонтируй флешку чисто (безопасное извлечение) и повтори."
+      }
+      $fsckFix = 1
+      continue
+    }
+    break
+  }
   if ($rc -ne 0) { Die "backup-linux.sh backup завершился с ошибкой (код $rc)." }
 }
 function Invoke-RestoreInWsl([string]$dev, [string]$wslKbak) {

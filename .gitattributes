@@ -47,3 +47,6 @@ S51dropbear text eol=lf
 *.tar.gz    binary
 *.png       binary
 *.jpg       binary
+
+# .bat — командные файлы Windows: хранить как есть (CRLF), не нормализовать
+*.bat -text

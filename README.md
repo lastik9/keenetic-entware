@@ -133,8 +133,8 @@ DRY_RUN=1 ARCH=mipsel sudo -E bash prepare-linux.sh /dev/sdX
 
 `prepare.ps1` сам ничего не размечает: он поднимает **WSL2**, пробрасывает туда флешку и запускает внутри `prepare-linux.sh` (единый источник правды — тот же скрипт, что и на нативном Linux).
 
-1. Скачай в одну папку **два** файла: [`prepare.ps1`](prepare.ps1) и [`prepare-linux.sh`](prepare-linux.sh). (Если положить рядом только `prepare.ps1`, он попробует докачать `prepare-linux.sh` с GitHub сам.)
-2. Кликни `prepare.ps1` правой кнопкой → **«Выполнить с помощью PowerShell»**. Или из консоли:
+1. Скачай в одну папку файлы: [`prepare.ps1`](prepare.ps1), [`prepare-linux.sh`](prepare-linux.sh) и — для запуска двойным кликом — [`prepare.bat`](prepare.bat). (Если положить рядом только `prepare.ps1`, он попробует докачать `prepare-linux.sh` с GitHub сам; `prepare.bat` не обязателен, но избавляет от возни с запуском.)
+2. Запусти **двойным кликом по `prepare.bat`**. Правый клик по `prepare.ps1` → «Выполнить с помощью PowerShell» часто не срабатывает (окно мигает и закрывается — политика Windows блокирует неподписанный `.ps1`). Тот же результат из консоли:
 
 ```
 powershell -ExecutionPolicy Bypass -File .\prepare.ps1
@@ -517,7 +517,7 @@ chmod +x backup-linux.sh
 
 Нужны: **WSL2 с Ubuntu**, права администратора, `usbipd-win` (ставится автоматически). Если WSL ещё нет — см. [«Если WSL не установлен»](#если-wsl-не-установлен).
 
-Положи [`backup.ps1`](backup.ps1) и [`backup-linux.sh`](backup-linux.sh) **в одну папку**, открой PowerShell **от имени администратора** и запусти:
+Положи [`backup.ps1`](backup.ps1), [`backup-linux.sh`](backup-linux.sh) и [`backup.bat`](backup.bat) **в одну папку** и запусти **двойным кликом по `backup.bat`** (права администратора обёртка поднимет сама через UAC). Правый клик по `.ps1` → «Выполнить с помощью PowerShell» часто не срабатывает. Тот же результат командой:
 
 ```
 cd "путь\к\папке"
