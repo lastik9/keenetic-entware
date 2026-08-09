@@ -378,7 +378,7 @@ Open **Applications → SMB server**:
 
 2. **Uncheck "Anonymous access".** In anonymous mode (`cifs permissive` in the config) the server doesn't check accounts, and logging in as `admin` is rejected with `Authentication error`. It's also a hole: `/opt` — the Entware root with configs, init scripts and SSH keys — becomes accessible to anyone on the LAN without a password.
 
-3. **Add a share** with the "+ Add share" button, pointing to the currently mounted `OPKG` partition. Verify it's mounted in **Applications → Disks and printers** (status "Connected", filesystem `EXT4`).
+3. **Add a share** with the "+ Add share" button, pointing to the currently mounted `OPKG` partition. Verify it's mounted in **Applications → Disks and printers** (status "Connected", filesystem `EXT4`). In the folder-selection dialog that opens, set the `admin` user's access right for that folder to **Read & Write** — without it SMB won't let `admin` in, and **Read-only** won't let you save the edits the share exists for.
 
 4. Make sure the user has the **"SMB network shares"** permission: **Management → Users → admin**.
 
