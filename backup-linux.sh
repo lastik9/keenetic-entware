@@ -533,8 +533,11 @@ do_restore() {
   info "Образ: $IMG"
 
   local STAGE="$WORKDIR/restore"; mkdir -p "$STAGE"
-  tar -xzf "$IMG" -C "$STAGE" || die "Не удалось распаковать образ."
-  [[ -f "$STAGE/opkg.e2img" ]] || die "Образ повреждён (нет opkg.e2img)."
+  # Сначала достаём ТОЛЬКО meta.txt (лёгкую): проверка вместимости обязана пройти ДО
+  # распаковки opkg.e2img. У несжатого образа (NO_SHRINK) opkg.e2img логически = весь
+  # раздел (десятки ГБ), развернуть его в WORKDIR раньше гейта = гарантированный ENOSPC.
+  # tar пишет только названный член; opkg.e2img при этом лишь проматывается (не пишется).
+  tar -xzf "$IMG" -C "$STAGE" meta.txt 2>/dev/null || true
 
   local src_bytes src_ext4_bytes fs_was_shrunk=0
   src_bytes="$(awk -F= '/^source_disk_bytes=/{print $2}' "$STAGE/meta.txt" 2>/dev/null)"
@@ -566,6 +569,13 @@ do_restore() {
   else
     info "ASSUME_YES=1 — подтверждение устройства пропущено (подтверждено обёрткой)."
   fi
+
+  # Гейт вместимости пройден и цель подтверждена — теперь разворачиваем тяжёлый opkg.e2img.
+  # Делаем это ДО wipefs: если распаковка не влезет (ENOSPC) или образ битый — падаем здесь,
+  # флешка ещё не тронута. (mbr.bin в restore не нужен: разметку кладёт sfdisk ниже.)
+  info "Распаковываю образ ФС..."
+  tar -xzf "$IMG" -C "$STAGE" opkg.e2img || die "Не удалось распаковать образ (opkg.e2img)."
+  [[ -f "$STAGE/opkg.e2img" ]] || die "Образ повреждён (нет opkg.e2img)."
 
   P1="$(part_dev "$DISK" 1)"   # swap
   P2="$(part_dev "$DISK" 2)"   # ext4 OPKG
