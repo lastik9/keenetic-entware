@@ -95,7 +95,14 @@ Info "Windows $winName (build $($win.Build)) - флешку пробрасыва
 function Ensure-Wsl {
   # is the wsl engine present at all
   if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-    Die "Не найден wsl.exe. Установи WSL: 'wsl --install' и перезагрузись, затем повтори."
+    Warn "Не найден wsl.exe - движок WSL отсутствует в системе."
+    Warn "На современных Win10/11 он есть из коробки; если его нет:"
+    Warn "  1) выполни в PowerShell (админ):  wsl --install"
+    Warn "     (если 'wsl' не найден - включи компоненты Windows вручную:"
+    Warn "      'Подсистема Windows для Linux' + 'Платформа виртуальной машины')"
+    Warn "  2) ОБЯЗАТЕЛЬНО перезагрузи компьютер,"
+    Warn "  3) затем запусти prepare.bat снова."
+    Die  "WSL не установлен - остановка."
   }
 
   # WSL version (if old built-in WSL - update it)
