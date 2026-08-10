@@ -93,23 +93,62 @@ Info "Windows $winName (build $($win.Build)) - флешку пробрасыва
 
 # ---------------------------------------------------------------- 1. WSL2 + Ubuntu
 function Ensure-Wsl {
-  # is the wsl engine present at all
-  if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-    Warn "Не найден wsl.exe - движок WSL отсутствует в системе."
-    Warn "На современных Win10/11 он есть из коробки; если его нет:"
-    Warn "  1) выполни в PowerShell (админ):  wsl --install"
-    Warn "     (если 'wsl' не найден - включи компоненты Windows вручную:"
-    Warn "      'Подсистема Windows для Linux' + 'Платформа виртуальной машины')"
-    Warn "  2) ОБЯЗАТЕЛЬНО перезагрузи компьютер,"
-    Warn "  3) затем запусти prepare.bat снова."
-    Die  "WSL не установлен - остановка."
-  }
+  # --- Быстрый путь: движок WSL уже рабочий? Тогда НИЧЕГО не трогаем (не регрессируем
+  # уже-настроенные Win10/11, где WSL стоит). ВНИМАНИЕ: на чистой системе wsl.exe - это
+  # inbox-ЗАГЛУШКА в System32: 'Get-Command wsl.exe' её находит, но движка нет, а
+  # 'wsl --version' на ней возвращает НЕ ноль. Поэтому наличие wsl.exe ничего не значит.
+  $engineOk = $false
+  try { $null = (wsl.exe --version) 2>$null; $engineOk = ($LASTEXITCODE -eq 0) } catch { $engineOk = $false }
 
-  # WSL version (if old built-in WSL - update it)
-  $null = (wsl.exe --version) 2>$null
-  if ($LASTEXITCODE -ne 0) {
-    Warn "Старая версия WSL. Обновляю (wsl --update)..."
+  if (-not $engineOk) {
+    # Движок не отвечает. Отличить "заглушка/компонентов нет" от "компоненты есть, ядро
+    # не доустановлено" можно ТОЛЬКО по состоянию компонентов Windows (не по wsl.exe).
+    $featNames = @("Microsoft-Windows-Subsystem-Linux","VirtualMachinePlatform")
+    $needEnable = @()
+    foreach ($f in $featNames) {
+      $st = $null
+      try { $st = (Get-WindowsOptionalFeature -Online -FeatureName $f -ErrorAction Stop).State } catch { }
+      if ($st -ne "Enabled") { $needEnable += $f }
+    }
+
+    if ($needEnable.Count -gt 0) {
+      # Находка #1: компонентов нет. НЕ идём в 'wsl --update' (на заглушке он печатает
+      # справку) и НЕ дёргаем 'wsl --install' (Находка #2: роняет CBS в COMException) -
+      # включаем компоненты Windows напрямую и просим ОБЯЗАТЕЛЬНЫЙ ребут.
+      Warn "Движок WSL не установлен (компоненты выключены: $($needEnable -join ', '))."
+      Info "Включаю компоненты Windows (Enable-WindowsOptionalFeature)..."
+      foreach ($f in $needEnable) {
+        try {
+          $null = Enable-WindowsOptionalFeature -Online -FeatureName $f -All -NoRestart -ErrorAction Stop
+          Ok "  включено: $f"
+        } catch {
+          # COMException 'Не удаётся прочитать параметр реестра' = CBS в несогласованном
+          # состоянии (обычно после оборванного 'wsl --install'). Лечится ребутом + DISM.
+          Warn "Не удалось включить '$f': $($_.Exception.Message)"
+          Write-Host "    Обслуживание Windows (CBS) в несогласованном состоянии. Сделай и запусти prepare.bat снова:" -ForegroundColor Cyan
+          Write-Host "      1) перезагрузи компьютер;" -ForegroundColor Cyan
+          Write-Host "      2) в PowerShell (админ): DISM /Online /Cleanup-Image /RestoreHealth" -ForegroundColor Cyan
+          Die "Компонент '$f' не включился - нужен ребут + DISM."
+        }
+      }
+      Write-Host ""
+      Warn "Компоненты WSL включены - нужен ОБЯЗАТЕЛЬНЫЙ перезапуск Windows."
+      Write-Host "    ПЕРЕЗАГРУЗИ компьютер и запусти prepare.bat снова." -ForegroundColor Cyan
+      Write-Host "    (после ребута ядро WSL2 доустановится на шаге 'wsl --update')" -ForegroundColor Cyan
+      Die "Перезагрузка после включения компонентов WSL."
+    }
+
+    # Компоненты включены, но ядро/движок не готовы - ВОТ здесь 'wsl --update' легитимен
+    # (в отличие от чистой заглушки, где он просто печатал справку).
+    Warn "Компоненты WSL включены, ядро не готово. Обновляю (wsl --update)..."
     wsl.exe --update | Out-Host
+    $null = (wsl.exe --version) 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host ""
+      Warn "После 'wsl --update' движок ещё не отвечает - обычно помогает перезапуск."
+      Write-Host "    ПЕРЕЗАГРУЗИ компьютер и запусти prepare.bat снова." -ForegroundColor Cyan
+      Die "Нужна перезагрузка после установки ядра WSL."
+    }
   }
 
   # is our distro installed
@@ -330,11 +369,40 @@ function Attach-Win11([int]$diskNumber) {
 # ---------------------------------------------------------------- 6b. passthrough: usbipd
 function Ensure-Usbipd {
   if (-not (Get-Command usbipd -ErrorAction SilentlyContinue)) {
-    Info "Ставлю usbipd-win (winget)..."
-    try { winget install --exact --id dorssel.usbipd-win --accept-source-agreements --accept-package-agreements | Out-Host }
-    catch { Die "Не удалось поставить usbipd. Установи вручную: https://github.com/dorssel/usbipd-win/releases и повтори." }
+    $haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+    if ($haveWinget) {
+      Info "Ставлю usbipd-win (winget)..."
+      try { winget install --exact --id dorssel.usbipd-win --accept-source-agreements --accept-package-agreements | Out-Host }
+      catch { Warn "winget не смог поставить usbipd: $($_.Exception.Message). Пробую прямой MSI." }
+    } else {
+      Warn "winget отсутствует (обычно на чистой Win10) - ставлю usbipd из MSI напрямую."
+    }
+    # Находка #3: на чистой Win10 winget нет (App Installer не предустановлен).
+    # Фолбэк/основной путь - MSI с GitHub releases + msiexec.
     if (-not (Get-Command usbipd -ErrorAction SilentlyContinue)) {
-      Die "usbipd установлен, но не в PATH. Перезапусти PowerShell и запусти prepare.ps1 снова."
+      $arch = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') { "arm64" } else { "x64" }
+      $ver  = "5.3.0"   # проверено живьём; latest usbipd-win на момент правки
+      $msiName = "usbipd-win_${ver}_${arch}.msi"
+      $msiUrl  = "https://github.com/dorssel/usbipd-win/releases/download/v$ver/$msiName"
+      if (-not (Test-Path $TmpDir)) { New-Item -ItemType Directory -Path $TmpDir -Force | Out-Null }
+      $msiPath = Join-Path $TmpDir $msiName
+      Info "Скачиваю $msiName с GitHub..."
+      try {
+        $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
+        $ProgressPreference = $prev
+      } catch { Die "Не удалось скачать usbipd MSI ($msiUrl): $($_.Exception.Message)" }
+      Info "Устанавливаю usbipd (msiexec /qn)..."
+      $mp = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/i `"$msiPath`" /qn /norestart"
+      if ($mp.ExitCode -ne 0 -and $mp.ExitCode -ne 3010) {
+        Die "msiexec вернул код $($mp.ExitCode) при установке usbipd. Поставь вручную из $msiUrl и повтори."
+      }
+      # PATH для usbipd применяется только к НОВЫМ процессам - подхватываем машинный+
+      # пользовательский PATH, чтобы Get-Command увидел usbipd без перезапуска консоли.
+      $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    }
+    if (-not (Get-Command usbipd -ErrorAction SilentlyContinue)) {
+      Die "usbipd установлен, но не виден в PATH. Перезапусти PowerShell и запусти prepare.ps1 снова."
     }
   }
   # служба usbipd бывает не запущена (в т.ч. после установки/перезагрузки)
