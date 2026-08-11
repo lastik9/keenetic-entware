@@ -83,7 +83,11 @@ trap cleanup EXIT INT TERM
 
 if [[ $EUID -ne 0 ]]; then
   info "Нужны права root — перезапускаю через sudo..."
-  exec sudo -E bash "$0" "$@"
+  # 'sudo -E' не годится: на Ubuntu 24.04+/26.04 sudo игнорит -E и молча теряет
+  # DRY_RUN/NO_SHRINK/FSCK_FIX/DEV/KBAK_OUT — для DRY_RUN=1 это боевой запуск вместо проверки.
+  # Передаём переменные явно (работает независимо от политики sudoers).
+  exec sudo DRY_RUN="$DRY_RUN" ASSUME_YES="$ASSUME_YES" NO_SHRINK="$NO_SHRINK" \
+       FSCK_FIX="$FSCK_FIX" DEV="$DEV" KBAK_OUT="$KBAK_OUT" bash "$0" "$@"
 fi
 
 TTY="/dev/tty"; [[ -e "$TTY" ]] || TTY="/dev/stdin"

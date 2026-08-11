@@ -75,6 +75,7 @@ if (-not (Test-Admin)) {
   if ($Arch)         { $argList += @("-Arch",$Arch) }
   if ($LinuxScript)  { $argList += @("-LinuxScript","`"$LinuxScript`"") }
   if ($KeepWslDns)   { $argList += "-KeepWslDns" }
+  if ($DryRun)       { $argList += "-DryRun" }
   Start-Process powershell -Verb RunAs -ArgumentList $argList
   exit
 }
@@ -317,6 +318,7 @@ function Choose-UsbDisk {
   Write-Host ""
   $sel = Read-Host "Номер флешки для подготовки (или q)"
   if ($sel -eq "q") { exit 0 }
+  if ($sel -notmatch '^\d+$') { Die "Некорректный выбор." }
   $disk = $map[[int]$sel]
   if (-not $disk) { Die "Некорректный выбор." }
 
