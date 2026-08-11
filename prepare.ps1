@@ -229,7 +229,7 @@ function Ensure-WslNet {
   if (-not $bad) {
     # resolve works - check a real download
     $probe = (Wsl "curl -fsS --max-time 8 -o /dev/null -w ok https://$host2/ 2>/dev/null").Trim()
-    if ($probe -eq "ok") { Ok "Интернет в WSL работает ($host2 -> $ip)."; return }
+    if ($probe -eq "ok") { Ok "Базовая сеть в WSL есть ($host2 -> $ip). Доступность installer'а проверю перед закачкой."; return }
     $bad = $true
   }
 

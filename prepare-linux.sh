@@ -326,6 +326,19 @@ ok "Архитектура: $ARCH"
 # ----------------------------------------------------------------------------
 # 5. Скачиваем installer заранее (до разметки — чтобы не стирать зря)
 # ----------------------------------------------------------------------------
+# Находка #4: реальный хост installer'а может редиректить на CDN (напр. yacloud.entware.net),
+# и SNI-фильтр (whitelist провайдера/роутера) режет TLS именно к нему — при живом DNS и рабочем
+# корне домена. Бьём заранее по ФАКТИЧЕСКОМУ URL (1 байт, по редиректам), чтобы дать понятную
+# причину ДО тяжёлой закачки, а не голый 'curl (35) unexpected eof' на пустом месте.
+info "Проверяю доступность installer'а: $INSTALLER_URL"
+if ! curl -fsSL --range 0-0 --max-time 15 -o /dev/null "$INSTALLER_URL" 2>/dev/null; then
+  net_fail "Хост installer'а недоступен по HTTPS: $INSTALLER_URL
+    Вероятная причина — SNI-фильтр (whitelist провайдера/роутера) режет TLS к
+    bin.entware.net и/или его CDN (yacloud.entware.net, IP 158.160.45.54),
+    хотя DNS и корень домена могут отвечать. Внеси ОБА хоста в whitelist и повтори.
+    Проверка из этой же сети:  curl -I -L $INSTALLER_URL"
+fi
+
 info "Скачиваю $INSTALLER_NAME ..."
 if curl -fL --retry 3 -o "$WORKDIR/$INSTALLER_NAME" "$INSTALLER_URL"; then
   [[ -s "$WORKDIR/$INSTALLER_NAME" ]] || die "Скачанный installer пустой."
