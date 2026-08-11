@@ -139,72 +139,74 @@ PIDFILE="${PIDFILE:-/opt/var/run/dropbear.pid}"
 
 # Демон считается живым, только если PID из pid-файла реально принадлежит
 # процессу dropbear. Раньше проверялось лишь наличие /proc/<PID>, из-за чего
-# после ребута чужой процесс, занявший тот же PID, выдавался за живой dropbear.
+# после ребута чужой процесс (например tsmb-server), занявший тот же PID,
+# выдавался за живой dropbear -> start молча ничего не делал.
 dropbear_status ()
 {
-  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
-  [ -n "$pid" ] || return 1
-  [ -d "/proc/$pid" ] || return 1
-  case "$(cat "/proc/$pid/comm" 2>/dev/null)" in
-    dropbear) return 0 ;;
-    *)        return 1 ;;
-  esac
+        pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+        [ -n "$pid" ] || return 1
+        [ -d "/proc/$pid" ] || return 1
+        case "$(cat "/proc/$pid/comm" 2>/dev/null)" in
+                dropbear) return 0 ;;
+                *)        return 1 ;;
+        esac
 }
 
 start()
 {
-  # подчищаем протухший pid-файл, оставшийся от прошлой загрузки
-  if [ -f "$PIDFILE" ] && ! dropbear_status
-  then
-    rm -f "$PIDFILE"
-  fi
-  $DROPBEAR -p $PORT -P $PIDFILE
+        # подчищаем протухший pid-файл, оставшийся от прошлой загрузки
+        if [ -f "$PIDFILE" ] && ! dropbear_status
+        then
+                rm -f "$PIDFILE"
+        fi
+        $DROPBEAR -p $PORT -P $PIDFILE
 }
 
 stop()
 {
-  # kill только если pid реально принадлежит dropbear: иначе restart на
-  # протухшем pid-файле убил бы чужой процесс (tsmb-server), занявший PID.
-  if dropbear_status
-  then
-    kill `cat $PIDFILE`
-  fi
-  rm -f "$PIDFILE"
+        # kill только если pid реально принадлежит dropbear: иначе restart на
+        # протухшем pid-файле убил бы чужой процесс (tsmb-server), занявший PID.
+        if dropbear_status
+        then
+                kill `cat $PIDFILE`
+        fi
+        rm -f "$PIDFILE"
 }
 case "$1" in
-  start)
-    if dropbear_status
-    then
-      echo dropbear already running
-    else
-      start
-    fi
-    ;;
-  stop)
-    if dropbear_status
-    then
-      stop
-    else
-      echo dropbear is not running
-      rm -f "$PIDFILE"
-    fi
-    ;;
-  status)
-    if dropbear_status
-    then
-      echo dropbear already running
-    else
-      echo dropbear is not running
-    fi
-    ;;
-  restart)
-    stop
-    sleep 3
-    start
-    ;;
-  *)
-    echo "Usage: $0 {start|stop|restart|status}"
-    ;;
+        start)
+                if dropbear_status
+                then
+                        echo dropbear already running
+                else
+                        start
+                fi
+                ;;
+        stop)
+                if dropbear_status
+                then
+                        stop
+                else
+                        echo dropbear is not running
+                        rm -f "$PIDFILE"
+                fi
+                ;;
+        status)
+                if dropbear_status
+                then
+                        echo dropbear already running
+                else
+                        echo dropbear is not running
+                fi
+                ;;
+
+        restart)
+                stop
+                sleep 3
+                start
+                ;;
+        *)
+                echo "Usage: $0 {start|stop|restart|status}"
+                ;;
 esac
 DBEOF
   chmod +x "$DB_INIT"
