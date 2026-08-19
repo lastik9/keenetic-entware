@@ -133,6 +133,28 @@ DRY_RUN=1 ARCH=mipsel sudo -E bash prepare-linux.sh /dev/sdX
 
 `prepare.ps1` сам ничего не размечает: он поднимает **WSL2**, пробрасывает туда флешку и запускает внутри `prepare-linux.sh` (единый источник правды — тот же скрипт, что и на нативном Linux).
 
+**Рекомендуется — скачать и сверить одной командой** (обычный PowerShell). Гарантирует, что подтянулась именно проверенная версия (пин `9e2116e`), а не чужая или устаревшая:
+
+```powershell
+mkdir C:\Keenetic\Install -Force; cd C:\Keenetic\Install
+$c="9e2116eb9da584e4fbad71041484c50fac3a2f46"
+$b="https://raw.githubusercontent.com/lastik9/keenetic-entware/$c"
+foreach($f in "prepare.bat","prepare.ps1","prepare-linux.sh"){ Invoke-WebRequest "$b/$f" -OutFile $f -UseBasicParsing }
+foreach($f in "prepare.ps1","prepare-linux.sh","prepare.bat"){ "$f  " + (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() }
+```
+
+Ожидаемые SHA-256 (хоть один не совпал — **стоп**, скачалась не та версия):
+
+```
+prepare.ps1       cdac4d878fb1e07bb299287727c67f1193162ca2454d9cd9396ed223c054374d
+prepare-linux.sh  e52fd45ca2929eef9d253fc43a5febbbfe5117fe233830e2a1a2d4c6fb3b3412
+prepare.bat       4bd1057f191cf3c430233abbdca9f74dfccc7fb70cb00692c2822a0314e0be0f
+```
+
+Затем — двойной клик по `prepare.bat` → «Запуск от имени администратора».
+
+Либо вручную, файл за файлом:
+
 1. Скачай в одну папку файлы: [`prepare.ps1`](prepare.ps1), [`prepare-linux.sh`](prepare-linux.sh) и — для запуска двойным кликом — [`prepare.bat`](prepare.bat). (Если положить рядом только `prepare.ps1`, он попробует докачать `prepare-linux.sh` с GitHub сам; `prepare.bat` не обязателен, но избавляет от возни с запуском.)
 2. Запусти **двойным кликом по `prepare.bat`**. Правый клик по `prepare.ps1` → «Выполнить с помощью PowerShell» часто не срабатывает (окно мигает и закрывается — политика Windows блокирует неподписанный `.ps1`). Тот же результат из консоли:
 

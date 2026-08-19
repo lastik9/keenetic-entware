@@ -128,6 +128,28 @@ DRY_RUN=1 ARCH=mipsel sudo -E bash prepare-linux.sh /dev/sdX
 
 `prepare.ps1` doesn't partition anything itself: it brings up **WSL2**, passes the flash drive through, and runs `prepare-linux.sh` inside (single source of truth — the same script used on native Linux).
 
+**Recommended — download and verify in one command** (regular PowerShell). Guarantees you pulled exactly the verified version (pin `9e2116e`), not someone else's or an outdated one:
+
+```powershell
+mkdir C:\Keenetic\Install -Force; cd C:\Keenetic\Install
+$c="9e2116eb9da584e4fbad71041484c50fac3a2f46"
+$b="https://raw.githubusercontent.com/lastik9/keenetic-entware/$c"
+foreach($f in "prepare.bat","prepare.ps1","prepare-linux.sh"){ Invoke-WebRequest "$b/$f" -OutFile $f -UseBasicParsing }
+foreach($f in "prepare.ps1","prepare-linux.sh","prepare.bat"){ "$f  " + (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() }
+```
+
+Expected SHA-256 (if even one doesn't match — **stop**, you downloaded the wrong version):
+
+```
+prepare.ps1       cdac4d878fb1e07bb299287727c67f1193162ca2454d9cd9396ed223c054374d
+prepare-linux.sh  e52fd45ca2929eef9d253fc43a5febbbfe5117fe233830e2a1a2d4c6fb3b3412
+prepare.bat       4bd1057f191cf3c430233abbdca9f74dfccc7fb70cb00692c2822a0314e0be0f
+```
+
+Then double-click `prepare.bat` → "Run as administrator".
+
+Or manually, file by file:
+
 1. Download **two** files into one folder: [`prepare.ps1`](prepare.ps1) and [`prepare-linux.sh`](prepare-linux.sh). (If only `prepare.ps1` is present, it will try to fetch `prepare-linux.sh` from GitHub itself.)
 2. Right-click `prepare.ps1` → **"Run with PowerShell"**. Or from a console:
 

@@ -18,8 +18,9 @@
 **Проверка целостности файлов** (необязательно). Контрольные суммы SHA-256:
 
 ```
-backup-linux.sh : 357E432697732C2528B3DEFB0B8AD7DB8BF67659670C9DBCBF45D01A92957D61
+backup-linux.sh : BD26DDEFB555C8C23570B9E1441FE9106D7735EC69F7B0DA75860518067D27A5
 backup.ps1      : 5DF5AF45416D39752645825D852AB509A8471463603A217FE95ECF48D25F6D59
+backup.bat      : 212C1723047685AB991821DE9ADE4BC88D64BE002784F6AC03CF4CE831338493
 ```
 
 Сверить: `Get-FileHash <файл> -Algorithm SHA256` (Windows) или `sha256sum <файл>` (Linux).
@@ -51,6 +52,26 @@ backup.ps1      : 5DF5AF45416D39752645825D852AB509A8471463603A217FE95ECF48D25F6D
 
 **0. Виртуализация в BIOS/UEFI.** Включить `Intel VT-x` / `Intel Virtualization Technology`,
 либо `AMD-V` / `SVM Mode`. Без неё WSL2 не поднимется.
+
+**Скачать и сверить одной командой** (обычный PowerShell) — тянет проверенную версию (пин `9e2116e`) и сразу считает хеши:
+
+```powershell
+mkdir C:\Keenetic\Backup -Force; cd C:\Keenetic\Backup
+$c="9e2116eb9da584e4fbad71041484c50fac3a2f46"
+$b="https://raw.githubusercontent.com/lastik9/keenetic-entware/$c"
+foreach($f in "backup.bat","backup.ps1","backup-linux.sh"){ Invoke-WebRequest "$b/$f" -OutFile $f -UseBasicParsing }
+foreach($f in "backup.ps1","backup-linux.sh","backup.bat"){ "$f  " + (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() }
+```
+
+Ожидаемые SHA-256 (хоть один не совпал — скачай заново):
+
+```
+backup.ps1        5df5af45416d39752645825d852ab509a8471463603a217fe95ecf48d25f6d59
+backup-linux.sh   bd26ddefb555c8c23570b9e1441fe9106d7735ec69f7b0da75860518067d27a5
+backup.bat        212c1723047685ab991821de9ade4bc88d64be002784f6ac03cf4ce831338493
+```
+
+Затем — двойной клик по `backup.bat`. Либо вручную, файл за файлом:
 
 **1. Скачать два файла в одну папку:** [`backup.ps1`](backup.ps1) и [`backup-linux.sh`](backup-linux.sh) (на странице файла — кнопка **«Download raw file»** справа сверху). Держать рядом удобно —
 тогда обёртка возьмёт локальный `backup-linux.sh` и не будет качать его из сети.
